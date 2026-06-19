@@ -1,0 +1,13 @@
+{"query": "How long is the Home Battery NB-10 covered under warranty?", "expected_source": "coverage-matrix.md", "expected_section": "Home Battery NB-10"}
+{"query": "What is the warranty period for the solar inverter?", "expected_source": "coverage-matrix.md", "expected_section": "Solar Inverter NS-5"}
+{"query": "How many years of warranty does the EV charger have?", "expected_source": "coverage-matrix.md", "expected_section": "EV Charger NC-2"}
+{"query": "Is water damage or flooding covered by the warranty?", "expected_source": "exclusions.md", "expected_section": "Environmental and Power Conditions"}
+{"query": "Is a cracked case from dropping the unit covered?", "expected_source": "exclusions.md", "expected_section": "Physical and Cosmetic Damage"}
+{"query": "Are replacement cables and filters covered?", "expected_source": "exclusions.md", "expected_section": "Consumable and Wear Parts"}
+{"query": "How do I request an RMA number to return a unit?", "expected_source": "rma-procedure.md", "expected_section": "Requesting an RMA Number"}
+{"query": "How should I package a product for return?", "expected_source": "rma-procedure.md", "expected_section": "Packaging and Shipping"}
+{"query": "How long does it take to process a warranty return?", "expected_source": "rma-procedure.md", "expected_section": "Turnaround Time"}
+{"query": "How do I install the home battery on a wall?", "expected_source": "product-manual-home-battery.md", "expected_section": "Installation"}
+{"query": "What does inverter fault code E05 mean and how do I reset it?", "expected_source": "product-manual-solar-inverter.md", "expected_section": "Troubleshooting"}
+{"query": "Can I transfer my warranty to the new owner of my house?", "expected_source": "warranty-policy.md", "expected_section": "Transfer of Warranty"}
+{"query": "What extra protection does the extended warranty add?", "expected_source": "extended-warranty.md", "expected_section": "Additional Coverage"}
