@@ -8,6 +8,21 @@ class Settings(BaseSettings):
 
     co_api_key: str | None = None
 
+    database_url: str = "postgresql://caselens:caselens@localhost:5432/caselens"
+
+    embed_model: str = "embed-v4.0"
+    rerank_model: str = "rerank-v4.0"
+    chat_model: str = "command-a-03-2025"
+
+    embedding_dim: int = 1536
+    embed_batch_size: int = 96
+
+    chunk_size: int = 900
+    chunk_overlap: int = 100
+
+    retrieval_k: int = 20
+    rerank_n: int = 5
+
 
 @lru_cache
 def get_settings() -> Settings:

@@ -9,7 +9,11 @@ dependencies = [
     "cohere>=5.13",
     "pydantic-settings>=2.7",
     "python-dotenv>=1.0",
+    "psycopg[binary]>=3.2",
 ]
+
+[project.scripts]
+caselens-rag = "caselens.rag.cli:main"
 
 [dependency-groups]
 dev = [
