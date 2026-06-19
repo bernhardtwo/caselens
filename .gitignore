@@ -1,0 +1,21 @@
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+.uv/
+# Node
+node_modules/
+.next/
+out/
+# Env y secretos
+.env
+.env.*
+*.local
+# Infra
+infra/.secrets/
+*.tfstate
+*.tfstate.*
+# OS / editor
+.DS_Store
+.idea/
+.vscode/
