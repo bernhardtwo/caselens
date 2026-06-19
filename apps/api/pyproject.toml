@@ -1,0 +1,40 @@
+[project]
+name = "caselens"
+version = "0.1.0"
+description = "Cohere-native agent over enterprise documents with grounded citations"
+requires-python = ">=3.11"
+dependencies = [
+    "fastapi>=0.115",
+    "uvicorn>=0.34",
+    "cohere>=5.13",
+    "pydantic-settings>=2.7",
+    "python-dotenv>=1.0",
+]
+
+[dependency-groups]
+dev = [
+    "pytest>=8.3",
+    "ruff>=0.8",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/caselens"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+src = ["src", "tests", "scripts"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B"]
+
+[tool.ruff.lint.isort]
+known-first-party = ["caselens"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q"
