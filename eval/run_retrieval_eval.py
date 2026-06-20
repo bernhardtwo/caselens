@@ -10,6 +10,7 @@ Not wired into CI yet (ADR-0006): it needs a live key and a populated database.
 import argparse
 import json
 import os
+import time
 from pathlib import Path
 
 from caselens.clients import get_cohere_client
@@ -44,6 +45,12 @@ def main(argv: list[str] | None = None) -> int:
         action="store_true",
         help="Also run the grounded-answer citation check (uses Command calls).",
     )
+    parser.add_argument(
+        "--sleep",
+        type=float,
+        default=6.5,
+        help="Seconds between cases to respect Cohere's trial limit (10/min per endpoint).",
+    )
     args = parser.parse_args(argv)
 
     settings = get_settings()
@@ -58,7 +65,10 @@ def main(argv: list[str] | None = None) -> int:
     answer_hits = answer_total = 0
 
     with connect(settings) as conn:
-        for case, query_vector in zip(cases, query_vectors, strict=True):
+        for index, (case, query_vector) in enumerate(zip(cases, query_vectors, strict=True)):
+            if index:
+                # Trial cap is 10/min per endpoint; one rerank (and one Command) call per case.
+                time.sleep(args.sleep)
             candidates = vector_search(conn, query_vector, k)
             vector_rank = next((c.vector_rank for c in candidates if _matches(c, case)), None)
             reranked = rerank_chunks(co, case["query"], candidates, settings.rerank_model, n)
