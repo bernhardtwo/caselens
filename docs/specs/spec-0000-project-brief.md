@@ -13,7 +13,7 @@ Builder: Bernardo Vega. Timeline: ~12 days, finish before end of June 2026.
 
 A mini-"North": drop an AI agent into a simulated enterprise environment, connect it to that company's documents, database, and an external API, and let it answer and act over sensitive data while staying scoped, audited, and grounded in citations. The whole thing is containerized so it can run in any cloud or a customer VPC.
 
-The build is Cohere-native on purpose: Command for the agent's reasoning and tool use, Embed 4 plus Rerank 4 for retrieval, and grounded generation with inline citations. Using Cohere's own stack is the single strongest signal for this role.
+The build is Cohere-native on purpose: Command for the agent's reasoning and tool use, Embed 4 plus rerank-v3.5 for retrieval, and grounded generation with inline citations. Using Cohere's own stack is the single strongest signal for this role.
 
 ## 2. Why this project (FDE requirement mapping)
 
@@ -24,7 +24,7 @@ The build is Cohere-native on purpose: Command for the agent's reasoning and too
 | Full-stack coding | Next.js workspace UI with live tool-calls and citations |
 | Agents over sensitive enterprise data | Tenant/user scoping, RBAC, audit log on every action |
 | Connect agents with workplace tools | Pluggable connectors: docs (RAG), database, external API |
-| RAG / semantic search | Embed 4 + Rerank 4 + grounded citations via Command |
+| RAG / semantic search | Embed 4 + rerank-v3.5 + grounded citations via Command |
 | Deploy in private or hybrid cloud | Portable container, cloud-agnostic, VPC-ready |
 | Cloud platforms (Azure/AWS/GCP) | Live deploy to one cloud, scale-to-zero |
 | Rapid, high-quality experiments | Agent eval harness wired into CI as a gate |
@@ -33,7 +33,7 @@ The build is Cohere-native on purpose: Command for the agent's reasoning and too
 
 **In scope**
 - Agent loop on Cohere Command (multi-step tool use)
-- RAG: ingest → chunk → Embed 4 → vector store → retrieve → Rerank 4 → grounded answer with inline citations
+- RAG: ingest → chunk → Embed 4 → vector store → retrieve → rerank-v3.5 → grounded answer with inline citations
 - Connectors: document store (RAG), claims database, one mock external API
 - Security posture: tenant/user data scoping enforced at the query layer, RBAC, audit log of every tool call and action
 - Full-stack workspace UI: chat, live tool-calls, sources/citations panel, action confirmations, audit view
@@ -54,7 +54,7 @@ The build is Cohere-native on purpose: Command for the agent's reasoning and too
 - **Frontend:** Next.js workspace UI. Streams the agent's tool-calls and renders citations.
 - **Backend:** Python API. Hosts the agent loop and the connectors. Same-origin proxy to the frontend.
 - **Agent:** Cohere Command Chat with tool use. Tools: `rag_search`, `query_claims` (tenant-scoped), `take_action` (guarded).
-- **RAG:** Embed 4 for document and query embeddings; vector store (pgvector in Postgres); Rerank 4 on retrieved candidates; Command produces the grounded answer with inline citations.
+- **RAG:** Embed 4 for document and query embeddings; vector store (pgvector in Postgres); rerank-v3.5 on retrieved candidates; Command produces the grounded answer with inline citations.
 - **Data:** Postgres. Synthetic claims plus synthetic policy/manual documents. Tenant and user model. All data access scoped by tenant.
 - **Security:** RBAC, per-request scoping, secrets via environment / secret store, append-only audit log.
 - **Deploy:** Docker multi-stage, deployed to a scale-to-zero container runtime. Cloud-agnostic by design.
@@ -73,7 +73,7 @@ The build is Cohere-native on purpose: Command for the agent's reasoning and too
 | Days | Focus |
 |---|---|
 | 1 | Specs + ADRs, repo scaffold (Python backend + Next.js frontend), synthetic-data plan, CI green-shell, Cohere key wired (`CO_API_KEY`) with a Command + Embed + Rerank smoke test |
-| 2-3 | RAG core: ingest → chunk → Embed 4 → pgvector → retrieve → Rerank 4 → grounded answer with citations. Retrieval eval set |
+| 2-3 | RAG core: ingest → chunk → Embed 4 → pgvector → retrieve → rerank-v3.5 → grounded answer with citations. Retrieval eval set |
 | 3-4 | Data layer: synthetic claims in Postgres, tenant/user model, RBAC, scoping enforced at the query layer |
 | 4-6 | Agent: Command tool-use loop with `rag_search`, `query_claims`, `take_action`; audit log; agent eval set |
 | 6-8 | Full-stack workspace UI: chat, live tool-calls, citations panel, action confirmations, audit view |
@@ -85,7 +85,7 @@ The build is Cohere-native on purpose: Command for the agent's reasoning and too
 ## 7. De-risk first
 
 Get these green by Day 3, everything hangs off them:
-1. RAG quality and citations (chunking, Embed 4, Rerank 4, grounded Chat output)
+1. RAG quality and citations (chunking, Embed 4, rerank-v3.5, grounded Chat output)
 2. The Cohere tool-use loop (multi-step, reliable tool selection)
 3. Tenant scoping enforced at the data layer (the security spine)
 

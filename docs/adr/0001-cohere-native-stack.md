@@ -9,7 +9,7 @@ This project is a portfolio piece targeting Cohere's Forward Deployed Engineer, 
 
 ## Decision
 
-Build the agent directly on Cohere's API: Command (Chat with tool use) for reasoning and tool selection, Embed 4 for embeddings, and Rerank 4 for retrieval reranking. Do not adopt Google ADK. Introduce LangGraph only if the agent's control flow genuinely outgrows a single tool-use loop.
+Build the agent directly on Cohere's API: Command (Chat with tool use) for reasoning and tool selection, Embed 4 for embeddings, and rerank-v3.5 for retrieval reranking. Do not adopt Google ADK. Introduce LangGraph only if the agent's control flow genuinely outgrows a single tool-use loop.
 
 ## Consequences
 

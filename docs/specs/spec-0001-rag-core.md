@@ -13,7 +13,7 @@ Build the retrieval spine: ingest enterprise documents, retrieve the right passa
 **In**
 - A small synthetic corpus of enterprise documents (warranty policies and manuals)
 - Ingestion: load, chunk, embed (Embed 4), store in pgvector
-- Retrieval: embed query, vector search, rerank (Rerank 4)
+- Retrieval: embed query, vector search, rerank (rerank-v3.5)
 - Grounded answer: Command produces an answer with verifiable inline citations
 - A retrieval eval set and a script that scores it
 
@@ -36,7 +36,7 @@ A handful (6-10) of short, synthetic warranty documents: a warranty policy, a co
 **Retrieve** (`caselens.rag.retrieve`)
 1. Embed the query with Embed 4 (`input_type=search_query`).
 2. Vector search for the top-k candidates (k=20, cosine distance; tunable).
-3. Rerank candidates with Rerank 4 (`rerank-v4.0`) and keep the top-n (n=5; tunable).
+3. Rerank candidates with `rerank-v3.5` and keep the top-n (n=5; tunable).
 
 **Answer** (`caselens.rag.answer`)
 1. Pass the top-n chunks to Command Chat as documents.
@@ -63,13 +63,13 @@ Retrieval and reranking are deterministic code; the model only writes the final 
 - Store: Postgres + pgvector, cosine distance.
 - Embedding: Embed 4, `search_document` for chunks and `search_query` for queries, output dim 1536.
 - Chunking: heading/section-aware, ~800-1000 chars, ~100 overlap.
-- Retrieval: top-k=20 vector search, then Rerank 4 to top-n=5.
+- Retrieval: top-k=20 vector search, then rerank-v3.5 to top-n=5.
 - Grounded answer via Command with documents and inline citations.
 
 ## Eval (retrieval golden set)
 
 - `eval/golden/retrieval.jsonl`: 10-15 cases, each `{query, expected_source, expected_section}`.
-- Metrics: recall@k (did the expected section make the top-k), and rerank lift (rank before vs after Rerank 4).
+- Metrics: recall@k (did the expected section make the top-k), and rerank lift (rank before vs after rerank-v3.5).
 - A grounded-answer check: the answer cites at least one of the expected sources.
 - This script is the seed of the CI eval gate (ADR-0006); wire it into CI on a later day, not yet.
 
