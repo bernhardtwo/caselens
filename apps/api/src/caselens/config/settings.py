@@ -11,7 +11,7 @@ class Settings(BaseSettings):
     database_url: str = "postgresql://caselens:caselens@localhost:5432/caselens"
 
     embed_model: str = "embed-v4.0"
-    rerank_model: str = "rerank-v4.0"
+    rerank_model: str = "rerank-v3.5"
     chat_model: str = "command-a-03-2025"
 
     embedding_dim: int = 1536
