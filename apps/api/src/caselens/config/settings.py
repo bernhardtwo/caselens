@@ -27,6 +27,9 @@ class Settings(BaseSettings):
     retrieval_k: int = 20
     rerank_n: int = 5
 
+    agent_max_iterations: int = 6
+    agent_temperature: float = 0.2
+
 
 @lru_cache
 def get_settings() -> Settings:
