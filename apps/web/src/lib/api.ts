@@ -1,4 +1,5 @@
-export const API_BASE = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
+// Same-origin: every call goes to the Next proxy at /api/*, which forwards to the API.
+export const API_BASE = "/api";
 
 export interface IdentityUser {
   id: number;
