@@ -3,11 +3,12 @@
 import { useCallback, useEffect, useReducer, useRef, useState } from "react";
 
 import { AnswerWithCitations } from "@/components/AnswerWithCitations";
+import { ConfirmationCard, type Proposal } from "@/components/ConfirmationCard";
 import { IdentitySwitcher } from "@/components/IdentitySwitcher";
 import { SourcesPanel } from "@/components/SourcesPanel";
 import { ToolTrace, type TraceEntry } from "@/components/ToolTrace";
 import { type AgentEvent, type Citation, type Source, streamAgent } from "@/lib/agentStream";
-import { fetchIdentities, type Identity, type Tenant, toIdentity } from "@/lib/api";
+import { confirmAction, fetchIdentities, type Identity, type Tenant, toIdentity } from "@/lib/api";
 
 interface Exchange {
   id: number;
@@ -16,6 +17,7 @@ interface Exchange {
   answer: string | null;
   citations: Citation[];
   sources: Source[];
+  proposals: Proposal[];
   status: "streaming" | "done" | "error";
   error?: string;
 }
@@ -28,13 +30,24 @@ type Action =
   | { type: "submit"; id: number; question: string }
   | { type: "event"; event: AgentEvent }
   | { type: "done" }
-  | { type: "error"; message: string };
+  | { type: "error"; message: string }
+  | {
+      type: "proposal_update";
+      exchangeId: number;
+      proposalId: string;
+      state: Proposal["state"];
+      message?: string;
+    };
 
 function updateLast(state: State, fn: (exchange: Exchange) => Exchange): State {
   if (state.exchanges.length === 0) return state;
   const exchanges = state.exchanges.slice();
   exchanges[exchanges.length - 1] = fn(exchanges[exchanges.length - 1]);
   return { exchanges };
+}
+
+function updateById(state: State, id: number, fn: (exchange: Exchange) => Exchange): State {
+  return { exchanges: state.exchanges.map((e) => (e.id === id ? fn(e) : e)) };
 }
 
 function closeRunning(trace: TraceEntry[], result: TraceEntry["result"]): TraceEntry[] {
@@ -68,7 +81,19 @@ function applyEvent(state: State, event: AgentEvent): State {
     case "error":
       return updateLast(state, (e) => ({ ...e, status: "error", error: event.data.detail }));
     case "action_proposed":
-      return state; // confirmation flow lands in the next slice
+      return updateLast(state, (e) => ({
+        ...e,
+        proposals: [
+          ...e.proposals,
+          {
+            id: `${e.id}-${e.proposals.length}`,
+            claimId: event.data.claim_id,
+            fromStatus: event.data.from_status,
+            toStatus: event.data.to_status,
+            state: "pending",
+          },
+        ],
+      }));
   }
 }
 
@@ -85,6 +110,7 @@ function reducer(state: State, action: Action): State {
             answer: null,
             citations: [],
             sources: [],
+            proposals: [],
             status: "streaming",
           },
         ],
@@ -95,6 +121,13 @@ function reducer(state: State, action: Action): State {
       return updateLast(state, (e) => (e.status === "streaming" ? { ...e, status: "done" } : e));
     case "error":
       return updateLast(state, (e) => ({ ...e, status: "error", error: action.message }));
+    case "proposal_update":
+      return updateById(state, action.exchangeId, (e) => ({
+        ...e,
+        proposals: e.proposals.map((p) =>
+          p.id === action.proposalId ? { ...p, state: action.state, message: action.message } : p,
+        ),
+      }));
   }
 }
 
@@ -155,6 +188,35 @@ export function Console() {
     }
   }, [input, busy, identity]);
 
+  const confirm = useCallback(
+    async (exchangeId: number, proposal: Proposal) => {
+      if (!identity) return;
+      dispatch({ type: "proposal_update", exchangeId, proposalId: proposal.id, state: "confirming" });
+      const outcome = await confirmAction(identity, proposal.claimId, proposal.toStatus);
+      if (outcome.ok) {
+        dispatch({
+          type: "proposal_update",
+          exchangeId,
+          proposalId: proposal.id,
+          state: "committed",
+        });
+      } else {
+        dispatch({
+          type: "proposal_update",
+          exchangeId,
+          proposalId: proposal.id,
+          state: outcome.status === 403 ? "denied" : "error",
+          message: outcome.detail,
+        });
+      }
+    },
+    [identity],
+  );
+
+  const dismiss = useCallback((exchangeId: number, proposalId: string) => {
+    dispatch({ type: "proposal_update", exchangeId, proposalId, state: "dismissed" });
+  }, []);
+
   const focused = [...state.exchanges].reverse().find((e) => e.sources.length > 0) ?? null;
 
   return (
@@ -205,6 +267,15 @@ export function Console() {
                       onHover={exchange.id === focused?.id ? setActiveSources : undefined}
                     />
                   )}
+
+                  {exchange.proposals.map((proposal) => (
+                    <ConfirmationCard
+                      key={proposal.id}
+                      proposal={proposal}
+                      onConfirm={() => void confirm(exchange.id, proposal)}
+                      onDismiss={() => dismiss(exchange.id, proposal.id)}
+                    />
+                  ))}
 
                   {exchange.status === "streaming" && exchange.answer === null && (
                     <div className="flex items-center gap-2 text-sm text-slate-400">

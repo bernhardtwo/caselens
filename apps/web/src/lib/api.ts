@@ -47,3 +47,37 @@ export async function fetchIdentities(): Promise<Tenant[]> {
   const data = (await response.json()) as { tenants: Tenant[] };
   return data.tenants;
 }
+
+export interface ConfirmResult {
+  ok: true;
+  claim_id: number;
+  from: string;
+  to: string;
+}
+
+export type ConfirmOutcome =
+  | { ok: true; result: ConfirmResult }
+  | { ok: false; status: number; detail: string };
+
+export async function confirmAction(
+  identity: Identity,
+  claimId: number,
+  toStatus: string,
+): Promise<ConfirmOutcome> {
+  const response = await fetch(`${API_BASE}/actions/confirm`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", ...authHeaders(identity) },
+    body: JSON.stringify({ claim_id: claimId, to_status: toStatus }),
+  });
+  if (response.ok) {
+    return { ok: true, result: (await response.json()) as ConfirmResult };
+  }
+  let detail = `Error ${response.status}.`;
+  try {
+    const data = (await response.json()) as { detail?: string };
+    if (data.detail) detail = data.detail;
+  } catch {
+    // keep the generic message
+  }
+  return { ok: false, status: response.status, detail };
+}

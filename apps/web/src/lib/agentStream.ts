@@ -36,7 +36,7 @@ export type AgentEvent =
     }
   | { type: "answer"; data: { text: string } }
   | { type: "citations"; data: { citations: Citation[]; sources: Source[] } }
-  | { type: "action_proposed"; data: Record<string, unknown> }
+  | { type: "action_proposed"; data: { claim_id: number; from_status: string; to_status: string } }
   | { type: "error"; data: { detail: string } };
 
 function parseBlock(block: string): AgentEvent | null {
