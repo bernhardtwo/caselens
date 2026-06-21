@@ -11,6 +11,7 @@ out/
 .env
 .env.*
 *.local
+!infra/.env.prod.example
 # Infra
 infra/.secrets/
 *.tfstate

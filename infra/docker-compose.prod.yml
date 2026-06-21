@@ -1,0 +1,95 @@
+name: caselens
+
+# Full portable stack: postgres (internal), a one-shot idempotent bootstrap
+# (schema + corpus ingest + seed), the api (internal), and the web (the only
+# service the browser hits; it proxies /api to the api over the compose network).
+#   docker compose -f infra/docker-compose.prod.yml up --build
+
+services:
+  postgres:
+    image: pgvector/pgvector:pg16
+    environment:
+      POSTGRES_USER: caselens
+      POSTGRES_PASSWORD: caselens
+      POSTGRES_DB: caselens
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U caselens -d caselens"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  bootstrap:
+    image: caselens-api
+    environment:
+      DATABASE_URL: postgresql://caselens:caselens@postgres:5432/caselens
+    env_file:
+      - path: .env.prod
+        required: false
+    depends_on:
+      postgres:
+        condition: service_healthy
+    # Idempotent: init-db retries until Postgres answers, ingest skips unchanged docs,
+    # seed is a no-op when data already exists. Safe to re-run on redeploy.
+    command:
+      - sh
+      - -c
+      - |
+        set -e
+        until caselens-rag init-db; do echo "waiting for postgres..."; sleep 2; done
+        caselens-rag ingest
+        caselens-seed
+    restart: "no"
+
+  api:
+    build:
+      context: ..
+      dockerfile: apps/api/Dockerfile
+    image: caselens-api
+    environment:
+      DATABASE_URL: postgresql://caselens:caselens@postgres:5432/caselens
+    env_file:
+      - path: .env.prod
+        required: false
+    depends_on:
+      postgres:
+        condition: service_healthy
+      bootstrap:
+        condition: service_completed_successfully
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://localhost:8000/health').status==200 else 1)
+      interval: 5s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
+
+  web:
+    build:
+      context: ../apps/web
+      dockerfile: Dockerfile
+    image: caselens-web
+    environment:
+      API_INTERNAL_URL: http://api:8000
+    depends_on:
+      api:
+        condition: service_healthy
+    ports:
+      - "${WEB_PORT:-3000}:3000"
+    healthcheck:
+      test:
+        - CMD
+        - node
+        - -e
+        - fetch('http://localhost:3000/').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))
+      interval: 5s
+      timeout: 5s
+      retries: 10
+      start_period: 5s
+
+volumes:
+  pgdata:
