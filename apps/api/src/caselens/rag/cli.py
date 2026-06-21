@@ -4,6 +4,7 @@ import os
 import sys
 
 from caselens.clients import MissingApiKeyError
+from caselens.data.db import apply_schema as apply_data_schema
 
 from .answer import answer, cited_sources
 from .db import connect, init_db
@@ -16,6 +17,7 @@ def _dispatch(args: argparse.Namespace) -> int:
     if args.command == "init-db":
         with connect() as conn:
             init_db(conn)
+            apply_data_schema(conn)
         print("Esquema aplicado.")
         return 0
 
