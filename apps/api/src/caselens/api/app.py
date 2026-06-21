@@ -1,13 +1,17 @@
+import json
 import os
+from collections.abc import Iterable, Iterator
 from dataclasses import asdict
 from typing import Annotated, Any
 
 from fastapi import Depends, FastAPI, Header, HTTPException
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
-from caselens.agent.loop import AgentResult, run_agent
+from caselens.agent.loop import AgentEvent, AgentResult, EventType, run_agent, run_agent_events
 from caselens.clients import MissingApiKeyError
 from caselens.data.models import Role, TenantContext
+from caselens.rag.models import RetrievedChunk
 
 app = FastAPI(title="caselens")
 
@@ -34,22 +38,41 @@ def get_tenant_context(
     return TenantContext(tenant_id=x_tenant_id, user_id=x_user_id, role=role)
 
 
+def serialize_source(chunk: RetrievedChunk) -> dict[str, Any]:
+    return {
+        "source": os.path.basename(chunk.source_path),
+        "title": chunk.title,
+        "section": chunk.section,
+        "rerank_score": chunk.rerank_score,
+    }
+
+
 def serialize_result(result: AgentResult) -> dict[str, Any]:
     return {
         "answer": result.answer,
         "citations": [asdict(c) for c in result.citations],
-        "sources": [
-            {
-                "source": os.path.basename(s.source_path),
-                "title": s.title,
-                "section": s.section,
-                "rerank_score": s.rerank_score,
-            }
-            for s in result.sources
-        ],
+        "sources": [serialize_source(s) for s in result.sources],
         "tool_trace": [asdict(t) for t in result.tool_trace],
         "actions_taken": result.actions_taken,
     }
+
+
+def serialize_event(event: AgentEvent) -> dict[str, Any]:
+    if event.type is EventType.CITATIONS:
+        return {
+            "citations": [asdict(c) for c in event.data["citations"]],
+            "sources": [serialize_source(s) for s in event.data["sources"]],
+        }
+    return event.data
+
+
+def format_sse(event_name: str, data: dict[str, Any]) -> str:
+    return f"event: {event_name}\ndata: {json.dumps(data, ensure_ascii=False)}\n\n"
+
+
+def sse_stream(events: Iterable[AgentEvent]) -> Iterator[str]:
+    for event in events:
+        yield format_sse(event.type.value, serialize_event(event))
 
 
 @app.post("/agent")
@@ -61,3 +84,17 @@ def agent_endpoint(
     except MissingApiKeyError as exc:
         raise HTTPException(status_code=503, detail=str(exc)) from exc
     return serialize_result(result)
+
+
+@app.post("/agent/stream")
+def agent_stream(
+    body: AgentRequest, ctx: Annotated[TenantContext, Depends(get_tenant_context)]
+) -> StreamingResponse:
+    # Interactive: mutations are proposed (action_proposed), committed only via /actions/confirm.
+    def generate() -> Iterator[str]:
+        try:
+            yield from sse_stream(run_agent_events(ctx, body.message, interactive=True))
+        except MissingApiKeyError as exc:
+            yield format_sse("error", {"detail": str(exc)})
+
+    return StreamingResponse(generate(), media_type="text/event-stream")
