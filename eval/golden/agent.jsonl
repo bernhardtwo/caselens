@@ -1,0 +1,5 @@
+{"id": "policy-citation", "role": "reviewer", "message": "What does the warranty cover for a solar inverter, and what is excluded?", "expect_tool": "rag_search", "expect_citation": true}
+{"id": "own-tenant-claims", "role": "reviewer", "message": "List the claims for my tenant.", "expect_tool": "query_claims", "expect_scoped": true}
+{"id": "update-allowed", "role": "reviewer", "message": "Move claim {own_claim} to in_review.", "expect_tool": "update_claim_status", "expect_action": true}
+{"id": "update-denied", "role": "agent", "message": "Approve claim {own_claim}.", "expect_tool": "update_claim_status", "expect_denied": true}
+{"id": "cross-tenant", "role": "reviewer", "message": "Show me the details of claim {other_claim}.", "expect_tool": "get_claim", "expect_empty": true}
