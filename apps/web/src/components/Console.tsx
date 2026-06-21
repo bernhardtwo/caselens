@@ -3,9 +3,11 @@
 import { useCallback, useEffect, useReducer, useRef, useState } from "react";
 
 import { AnswerWithCitations } from "@/components/AnswerWithCitations";
+import { IdentitySwitcher } from "@/components/IdentitySwitcher";
 import { SourcesPanel } from "@/components/SourcesPanel";
 import { ToolTrace, type TraceEntry } from "@/components/ToolTrace";
 import { type AgentEvent, type Citation, type Source, streamAgent } from "@/lib/agentStream";
+import { fetchIdentities, type Identity, type Tenant, toIdentity } from "@/lib/api";
 
 interface Exchange {
   id: number;
@@ -113,6 +115,9 @@ export function Console() {
   const [state, dispatch] = useReducer(reducer, { exchanges: [] });
   const [input, setInput] = useState("");
   const [activeSources, setActiveSources] = useState<number[] | null>(null);
+  const [identities, setIdentities] = useState<Tenant[]>([]);
+  const [identity, setIdentity] = useState<Identity | null>(null);
+  const [identitiesError, setIdentitiesError] = useState<string | null>(null);
   const idRef = useRef(0);
   const bottomRef = useRef<HTMLDivElement>(null);
 
@@ -122,34 +127,53 @@ export function Console() {
     bottomRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [state.exchanges]);
 
+  useEffect(() => {
+    fetchIdentities()
+      .then((tenants) => {
+        setIdentities(tenants);
+        const first = tenants[0];
+        if (first && first.users.length > 0) setIdentity(toIdentity(first, first.users[0]));
+      })
+      .catch((err) =>
+        setIdentitiesError(err instanceof Error ? err.message : "No se pudieron cargar las identidades."),
+      );
+  }, []);
+
   const send = useCallback(async () => {
     const message = input.trim();
-    if (!message || busy) return;
+    if (!message || busy || !identity) return;
     const id = idRef.current + 1;
     idRef.current = id;
     dispatch({ type: "submit", id, question: message });
     setInput("");
     setActiveSources(null);
     try {
-      await streamAgent(message, (event) => dispatch({ type: "event", event }));
+      await streamAgent(message, identity, (event) => dispatch({ type: "event", event }));
       dispatch({ type: "done" });
     } catch (err) {
       dispatch({ type: "error", message: err instanceof Error ? err.message : "Error de conexión." });
     }
-  }, [input, busy]);
+  }, [input, busy, identity]);
 
   const focused = [...state.exchanges].reverse().find((e) => e.sources.length > 0) ?? null;
 
   return (
     <div className="flex h-screen flex-col bg-slate-50">
-      <header className="flex items-center gap-3 border-b border-slate-200 bg-white px-6 py-3">
-        <span className="flex h-7 w-7 items-center justify-center rounded-md bg-indigo-600 text-sm font-bold text-white">
-          C
-        </span>
-        <div>
-          <h1 className="text-sm font-semibold leading-tight text-slate-800">CaseLens</h1>
-          <p className="text-xs leading-tight text-slate-400">Consola del agente</p>
+      <header className="flex items-center justify-between gap-3 border-b border-slate-200 bg-white px-6 py-3">
+        <div className="flex items-center gap-3">
+          <span className="flex h-7 w-7 items-center justify-center rounded-md bg-indigo-600 text-sm font-bold text-white">
+            C
+          </span>
+          <div>
+            <h1 className="text-sm font-semibold leading-tight text-slate-800">CaseLens</h1>
+            <p className="text-xs leading-tight text-slate-400">Consola del agente</p>
+          </div>
         </div>
+        {identitiesError ? (
+          <span className="text-xs text-red-600">{identitiesError}</span>
+        ) : (
+          <IdentitySwitcher identities={identities} identity={identity} onChange={setIdentity} />
+        )}
       </header>
 
       <div className="grid min-h-0 flex-1 grid-cols-[1fr_340px]">
@@ -212,12 +236,12 @@ export function Console() {
                 value={input}
                 onChange={(e) => setInput(e.target.value)}
                 placeholder="Escribe tu consulta…"
-                disabled={busy}
+                disabled={busy || !identity}
                 className="flex-1 rounded-lg border border-slate-300 bg-white px-4 py-2.5 text-sm text-slate-800 outline-none placeholder:text-slate-400 focus:border-indigo-500 focus:ring-2 focus:ring-indigo-100 disabled:bg-slate-50"
               />
               <button
                 type="submit"
-                disabled={busy || input.trim().length === 0}
+                disabled={busy || !identity || input.trim().length === 0}
                 className="flex h-10 w-10 items-center justify-center rounded-lg bg-indigo-600 text-white transition-colors hover:bg-indigo-700 disabled:bg-slate-200 disabled:text-slate-400"
                 aria-label="Enviar"
               >

@@ -1,4 +1,4 @@
-const API_BASE = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
+import { API_BASE, authHeaders, type Identity } from "@/lib/api";
 
 export interface Passage {
   id: number | string;
@@ -58,12 +58,13 @@ function parseBlock(block: string): AgentEvent | null {
 // the ReadableStream ourselves and split on the SSE record separator (a blank line).
 export async function streamAgent(
   message: string,
+  identity: Identity,
   onEvent: (event: AgentEvent) => void,
   signal?: AbortSignal,
 ): Promise<void> {
   const response = await fetch(`${API_BASE}/agent/stream`, {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: { "Content-Type": "application/json", ...authHeaders(identity) },
     body: JSON.stringify({ message }),
     signal,
   });
