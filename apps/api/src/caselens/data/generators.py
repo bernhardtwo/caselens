@@ -105,8 +105,13 @@ def generate(
 
 
 def seed(conn: psycopg.Connection, drafts: list[DraftTenant]) -> dict[str, int]:
+    """Insert the drafts. Idempotent: if any tenant already exists it is a no-op, so
+    re-running the bootstrap does not duplicate. Use --reset to truncate and reseed."""
     counts = {"tenants": 0, "users": 0, "claims": 0}
     with conn.cursor() as cur:
+        cur.execute("SELECT 1 FROM tenants LIMIT 1")
+        if cur.fetchone() is not None:
+            return counts
         for tenant in drafts:
             cur.execute("INSERT INTO tenants (name) VALUES (%s) RETURNING id", (tenant.name,))
             tenant_id = cur.fetchone()[0]
@@ -160,10 +165,13 @@ def main(argv: list[str] | None = None) -> int:
         if args.reset:
             _truncate(conn)
         counts = seed(conn, drafts)
-    print(
-        f"Sembrados {counts['tenants']} tenants, "
-        f"{counts['users']} users, {counts['claims']} claims."
-    )
+    if counts["tenants"] == 0:
+        print("Datos ya presentes; no se sembró (idempotente). Usa --reset para resembrar.")
+    else:
+        print(
+            f"Sembrados {counts['tenants']} tenants, "
+            f"{counts['users']} users, {counts['claims']} claims."
+        )
     return 0
 
 
