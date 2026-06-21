@@ -5,12 +5,14 @@ from dataclasses import asdict
 from typing import Annotated, Any
 
 from fastapi import Depends, FastAPI, Header, HTTPException
+from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
 from caselens.agent.loop import AgentEvent, AgentResult, EventType, run_agent, run_agent_events
 from caselens.agent.tools import apply_status_change
 from caselens.clients import MissingApiKeyError
+from caselens.config.settings import get_settings
 from caselens.data.db import connect
 from caselens.data.models import AuditEntry, Claim, ClaimFilters, ClaimStatus, Role, TenantContext
 from caselens.data.repository import ClaimsRepository
@@ -18,6 +20,14 @@ from caselens.rag.models import RetrievedChunk
 from caselens.security.audit import audit, list_audit
 
 app = FastAPI(title="caselens")
+
+# Dev console runs on a separate origin; allow it to call the API from the browser.
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=[get_settings().web_origin],
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 
 @app.get("/health")

@@ -30,6 +30,8 @@ class Settings(BaseSettings):
     agent_max_iterations: int = 6
     agent_temperature: float = 0.2
 
+    web_origin: str = "http://localhost:3000"
+
 
 @lru_cache
 def get_settings() -> Settings:
