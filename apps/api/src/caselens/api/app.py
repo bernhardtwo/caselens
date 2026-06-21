@@ -202,3 +202,27 @@ def get_audit(
         return {"audit": [serialize_audit(e) for e in entries]}
     finally:
         conn.close()
+
+
+@app.get("/dev/identities")
+def dev_identities() -> dict[str, Any]:
+    """DEV/DEMO only: list seeded tenants and their users to populate the console switcher.
+    Stands in for real auth and is intentionally not tenant-scoped."""
+    conn = connect()
+    try:
+        with conn.cursor() as cur:
+            cur.execute("SELECT id, name FROM tenants ORDER BY id")
+            tenants = cur.fetchall()
+            cur.execute("SELECT id, tenant_id, email, role FROM users ORDER BY tenant_id, id")
+            users = cur.fetchall()
+    finally:
+        conn.close()
+    members: dict[int, list[dict[str, Any]]] = {}
+    for user_id, tenant_id, email, role in users:
+        members.setdefault(tenant_id, []).append({"id": user_id, "email": email, "role": role})
+    return {
+        "tenants": [
+            {"id": tenant_id, "name": name, "users": members.get(tenant_id, [])}
+            for tenant_id, name in tenants
+        ]
+    }
