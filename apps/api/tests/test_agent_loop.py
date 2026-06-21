@@ -10,7 +10,7 @@ from caselens.agent import tools as agent_tools
 from caselens.agent.loop import run_agent
 from caselens.data.db import apply_schema, connect
 from caselens.data.models import ClaimStatus, Role, TenantContext
-from caselens.rag.models import Citation, GroundedAnswer, RetrievedChunk
+from caselens.rag.models import RetrievedChunk
 
 pytestmark = pytest.mark.integration
 
@@ -63,12 +63,18 @@ def _call(call_id: str, name: str, args: dict) -> SimpleNamespace:
     )
 
 
-def _resp(*, tool_calls=None, text=None, tool_plan=None) -> SimpleNamespace:
+def _resp(*, tool_calls=None, text=None, tool_plan=None, citations=None) -> SimpleNamespace:
     content = [SimpleNamespace(text=text)] if text is not None else None
     return SimpleNamespace(
         message=SimpleNamespace(
-            tool_calls=tool_calls, tool_plan=tool_plan, content=content, citations=None
+            tool_calls=tool_calls, tool_plan=tool_plan, content=content, citations=citations
         )
+    )
+
+
+def _citation(start: int, end: int, text: str, *source_ids: str) -> SimpleNamespace:
+    return SimpleNamespace(
+        start=start, end=end, text=text, sources=[SimpleNamespace(id=i) for i in source_ids]
     )
 
 
@@ -169,7 +175,7 @@ def test_update_denied_for_agent_role(conn):
     assert "claim.update_status" not in actions
 
 
-def test_rag_search_grounds_answer_with_citations(conn, monkeypatch):
+def test_rag_search_grounds_answer_with_native_citations(conn, monkeypatch):
     ids = _seed(conn)
     chunk = RetrievedChunk(
         chunk_id=1,
@@ -178,27 +184,28 @@ def test_rag_search_grounds_answer_with_citations(conn, monkeypatch):
         title="Warranty",
         section="Coverage",
         ordinal=0,
-        text="Covered.",
+        text="Covered for 5 years.",
         vector_distance=0.1,
         vector_rank=1,
         rerank_score=0.9,
         rerank_rank=1,
     )
-    grounded = GroundedAnswer(
-        text="Covered for 5 years.",
-        citations=[Citation(start=0, end=7, text="Covered", sources=["0"])],
-        sources=[chunk],
-    )
     monkeypatch.setattr(agent_tools, "retrieve", lambda *a, **k: [chunk])
-    monkeypatch.setattr(agent_tools, "build_answer", lambda *a, **k: grounded)
+    answer_text = "La garantía cubre 5 años."
     co = _fake_co(
         [
             _resp(tool_calls=[_call("t1", "rag_search", {"query": "warranty?"})]),
-            _resp(text="La garantía cubre 5 años."),
+            _resp(text=answer_text, citations=[_citation(3, 12, "garantía", "0")]),
         ]
     )
     ctx = TenantContext(ids["a"], ids["a_reviewer"], Role.REVIEWER)
     result = run_agent(ctx, "¿qué cubre la garantía?", co=co, conn=conn)
     assert result.tool_trace[0].name == "rag_search"
+    assert result.tool_trace[0].result["count"] == 1
+    assert result.answer == answer_text
     assert len(result.citations) == 1
+    citation = result.citations[0]
+    # Native citation: offsets fall within the final answer text (ADR-0007).
+    assert 0 <= citation.start < citation.end <= len(result.answer)
+    assert citation.sources == ["0"]
     assert result.sources[0].source_path.endswith("warranty-policy.md")
