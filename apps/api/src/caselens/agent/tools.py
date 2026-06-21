@@ -9,8 +9,7 @@ import psycopg
 from caselens.config.settings import Settings, get_settings
 from caselens.data.models import Claim, ClaimFilters, ClaimStatus, TenantContext
 from caselens.data.repository import ClaimsRepository
-from caselens.rag.answer import build_answer
-from caselens.rag.models import GroundedAnswer
+from caselens.rag.models import RetrievedChunk
 from caselens.rag.retrieve import retrieve
 from caselens.security import rbac
 from caselens.security.audit import audit
@@ -36,7 +35,7 @@ def can_transition(current: ClaimStatus, new: ClaimStatus) -> bool:
 @dataclass
 class ToolOutcome:
     result: dict[str, Any]
-    grounded: GroundedAnswer | None = None
+    passages: list[RetrievedChunk] | None = None
     action: dict[str, Any] | None = None
     proposed: dict[str, Any] | None = None
     denied: bool = False
@@ -109,19 +108,20 @@ def build_tools(
     repo = ClaimsRepository(conn)
 
     def rag_search(query: str) -> ToolOutcome:
+        # Retrieval only: the agent's final Command turn grounds on these passages
+        # via documents=, so citations are native to the answer it generates (ADR-0007).
         chunks = retrieve(query, co=co, conn=conn, settings=settings)
-        if not chunks:
-            grounded = GroundedAnswer(text="", citations=[], sources=[])
-        else:
-            grounded = build_answer(query, chunks, co=co, settings=settings)
-        return ToolOutcome(
-            result={
-                "answer": grounded.text,
-                "sources": [os.path.basename(c.source_path) for c in grounded.sources],
-                "citations": len(grounded.citations),
-            },
-            grounded=grounded,
-        )
+        passages = [
+            {
+                "id": chunk.chunk_id,
+                "source": os.path.basename(chunk.source_path),
+                "title": chunk.title,
+                "section": chunk.section,
+                "text": chunk.text,
+            }
+            for chunk in chunks
+        ]
+        return ToolOutcome(result={"passages": passages, "count": len(passages)}, passages=chunks)
 
     def query_claims(
         status: str | None = None, product: str | None = None, severity: str | None = None
@@ -188,8 +188,8 @@ def build_tools(
     return [
         AgentTool(
             "rag_search",
-            "Search the company's global policy and product documents and return a grounded "
-            "answer with citations. Use for warranty coverage, exclusions, procedures, or manuals.",
+            "Search the company's global policy and product documents and return the most "
+            "relevant passages. Use for warranty coverage, exclusions, procedures, or manuals.",
             {
                 "type": "object",
                 "properties": {
