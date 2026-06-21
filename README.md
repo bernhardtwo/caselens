@@ -155,7 +155,9 @@ The HTTP API and the evals need a Cohere key. The data and panel endpoints (`/cl
    uv run --project apps/api uvicorn caselens.api.app:app --reload
    ```
 
-7. **Run the console** on port 3000, from `apps/web`. It reads `NEXT_PUBLIC_API_URL` (default `http://localhost:8000`).
+7. **Run the console** on port 3000, from `apps/web`. The browser calls the web's own
+   `/api/*`, which a Next route handler proxies to the API at `API_INTERNAL_URL` (default
+   `http://localhost:8000`), so there is no CORS and no API URL baked into the build.
 
    ```bash
    cd apps/web
@@ -195,7 +197,7 @@ uv run --project apps/api caselens-rag query "What does the warranty cover for a
 | `DATABASE_URL` | api | `postgresql://caselens:caselens@localhost:5432/caselens` | Postgres connection string. Point it at 5433 when using `POSTGRES_PORT=5433`. |
 | `WEB_ORIGIN` | api | `http://localhost:3000` | Origin allowed by CORS for the browser console. |
 | `POSTGRES_PORT` | infra | `5432` | Host port for the Postgres container. |
-| `NEXT_PUBLIC_API_URL` | web | `http://localhost:8000` | API base URL the console calls. |
+| `API_INTERNAL_URL` | web | `http://localhost:8000` | Upstream API for the web's same-origin `/api` proxy. Dev: `localhost:8000`; prod compose: `http://api:8000`. |
 
 Retrieval and agent behavior are tunable in `settings.py`: vector top-k (20), rerank top-n (5), chunk size and overlap, embedding dimension (1536), agent max iterations (6), and temperature (0.2).
 
