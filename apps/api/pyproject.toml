@@ -43,3 +43,4 @@ known-first-party = ["caselens"]
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 addopts = "-q"
+markers = ["integration: needs a running Postgres (infra/docker-compose or the CI service)"]

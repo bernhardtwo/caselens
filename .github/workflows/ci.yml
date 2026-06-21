@@ -11,6 +11,20 @@ jobs:
     defaults:
       run:
         working-directory: apps/api
+    services:
+      postgres:
+        image: pgvector/pgvector:pg16
+        env:
+          POSTGRES_USER: caselens
+          POSTGRES_PASSWORD: caselens
+          POSTGRES_DB: caselens
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U caselens -d caselens"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
     steps:
       - uses: actions/checkout@v4
       - uses: astral-sh/setup-uv@v5
