@@ -3,12 +3,24 @@
 import { useCallback, useEffect, useReducer, useRef, useState } from "react";
 
 import { AnswerWithCitations } from "@/components/AnswerWithCitations";
+import { AuditPanel } from "@/components/AuditPanel";
+import { ClaimsPanel } from "@/components/ClaimsPanel";
 import { ConfirmationCard, type Proposal } from "@/components/ConfirmationCard";
 import { IdentitySwitcher } from "@/components/IdentitySwitcher";
 import { SourcesPanel } from "@/components/SourcesPanel";
 import { ToolTrace, type TraceEntry } from "@/components/ToolTrace";
 import { type AgentEvent, type Citation, type Source, streamAgent } from "@/lib/agentStream";
-import { confirmAction, fetchIdentities, type Identity, type Tenant, toIdentity } from "@/lib/api";
+import {
+  type AuditEntry,
+  type ClaimRow,
+  confirmAction,
+  fetchAudit,
+  fetchClaims,
+  fetchIdentities,
+  type Identity,
+  type Tenant,
+  toIdentity,
+} from "@/lib/api";
 
 interface Exchange {
   id: number;
@@ -151,6 +163,10 @@ export function Console() {
   const [identities, setIdentities] = useState<Tenant[]>([]);
   const [identity, setIdentity] = useState<Identity | null>(null);
   const [identitiesError, setIdentitiesError] = useState<string | null>(null);
+  const [claims, setClaims] = useState<ClaimRow[]>([]);
+  const [audit, setAudit] = useState<AuditEntry[]>([]);
+  const [tab, setTab] = useState<"sources" | "claims" | "audit">("sources");
+  const [panelsRefresh, setPanelsRefresh] = useState(0);
   const idRef = useRef(0);
   const bottomRef = useRef<HTMLDivElement>(null);
 
@@ -171,6 +187,28 @@ export function Console() {
         setIdentitiesError(err instanceof Error ? err.message : "No se pudieron cargar las identidades."),
       );
   }, []);
+
+  useEffect(() => {
+    if (!identity) return;
+    let active = true;
+    void (async () => {
+      try {
+        const [nextClaims, nextAudit] = await Promise.all([
+          fetchClaims(identity),
+          fetchAudit(identity),
+        ]);
+        if (active) {
+          setClaims(nextClaims);
+          setAudit(nextAudit);
+        }
+      } catch {
+        // leave the panels as they are on a transient error
+      }
+    })();
+    return () => {
+      active = false;
+    };
+  }, [identity, panelsRefresh]);
 
   const send = useCallback(async () => {
     const message = input.trim();
@@ -209,6 +247,8 @@ export function Console() {
           message: outcome.detail,
         });
       }
+      setPanelsRefresh((n) => n + 1);
+      setTab("audit");
     },
     [identity],
   );
@@ -238,7 +278,7 @@ export function Console() {
         )}
       </header>
 
-      <div className="grid min-h-0 flex-1 grid-cols-[1fr_340px]">
+      <div className="grid min-h-0 flex-1 grid-cols-[1fr_380px]">
         <section className="flex min-h-0 flex-col">
           <div className="flex-1 overflow-y-auto px-6 py-6">
             <div className="mx-auto flex max-w-2xl flex-col gap-8">
@@ -328,12 +368,39 @@ export function Console() {
           </form>
         </section>
 
-        <aside className="min-h-0 overflow-y-auto border-l border-slate-200 bg-white">
-          <SourcesPanel
-            sources={focused?.sources ?? []}
-            activeSources={activeSources}
-            onHover={setActiveSources}
-          />
+        <aside className="flex min-h-0 flex-col border-l border-slate-200 bg-white">
+          <div className="flex border-b border-slate-200">
+            {(
+              [
+                ["sources", "Fuentes"],
+                ["claims", "Reclamos"],
+                ["audit", "Auditoría"],
+              ] as const
+            ).map(([key, label]) => (
+              <button
+                key={key}
+                onClick={() => setTab(key)}
+                className={`flex-1 px-3 py-2 text-xs font-semibold transition-colors ${
+                  tab === key
+                    ? "border-b-2 border-indigo-600 text-indigo-700"
+                    : "text-slate-400 hover:text-slate-600"
+                }`}
+              >
+                {label}
+              </button>
+            ))}
+          </div>
+          <div className="min-h-0 flex-1 overflow-y-auto">
+            {tab === "sources" && (
+              <SourcesPanel
+                sources={focused?.sources ?? []}
+                activeSources={activeSources}
+                onHover={setActiveSources}
+              />
+            )}
+            {tab === "claims" && <ClaimsPanel claims={claims} />}
+            {tab === "audit" && <AuditPanel entries={audit} />}
+          </div>
         </aside>
       </div>
     </div>

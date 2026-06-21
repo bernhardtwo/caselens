@@ -81,3 +81,36 @@ export async function confirmAction(
   }
   return { ok: false, status: response.status, detail };
 }
+
+export interface ClaimRow {
+  id: number;
+  claimant_name: string;
+  product: string;
+  description: string;
+  status: string;
+  severity: string;
+  cost_cents: number | null;
+  submitted_at: string;
+}
+
+export interface AuditEntry {
+  id: number;
+  actor_user_id: number;
+  action: string;
+  target_type: string;
+  target_id: string | null;
+  metadata: Record<string, unknown>;
+  created_at: string;
+}
+
+export async function fetchClaims(identity: Identity): Promise<ClaimRow[]> {
+  const response = await fetch(`${API_BASE}/claims`, { headers: authHeaders(identity) });
+  if (!response.ok) throw new Error(`/claims respondió ${response.status}.`);
+  return ((await response.json()) as { claims: ClaimRow[] }).claims;
+}
+
+export async function fetchAudit(identity: Identity): Promise<AuditEntry[]> {
+  const response = await fetch(`${API_BASE}/audit`, { headers: authHeaders(identity) });
+  if (!response.ok) throw new Error(`/audit respondió ${response.status}.`);
+  return ((await response.json()) as { audit: AuditEntry[] }).audit;
+}
