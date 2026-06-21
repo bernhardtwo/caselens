@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useReducer, useRef, useState } from "react";
 
+import { AccessGate } from "@/components/AccessGate";
 import { AnswerWithCitations } from "@/components/AnswerWithCitations";
 import { AuditPanel } from "@/components/AuditPanel";
 import { ClaimsPanel } from "@/components/ClaimsPanel";
@@ -11,13 +12,16 @@ import { SourcesPanel } from "@/components/SourcesPanel";
 import { ToolTrace, type TraceEntry } from "@/components/ToolTrace";
 import { type AgentEvent, type Citation, type Source, streamAgent } from "@/lib/agentStream";
 import {
+  ApiError,
   type AuditEntry,
   type ClaimRow,
   confirmAction,
   fetchAudit,
   fetchClaims,
   fetchIdentities,
+  getAccessToken,
   type Identity,
+  setAccessToken,
   type Tenant,
   toIdentity,
 } from "@/lib/api";
@@ -163,6 +167,9 @@ export function Console() {
   const [identities, setIdentities] = useState<Tenant[]>([]);
   const [identity, setIdentity] = useState<Identity | null>(null);
   const [identitiesError, setIdentitiesError] = useState<string | null>(null);
+  const [gateRequired, setGateRequired] = useState(false);
+  const [gateError, setGateError] = useState<string | null>(null);
+  const [authReload, setAuthReload] = useState(0);
   const [claims, setClaims] = useState<ClaimRow[]>([]);
   const [audit, setAudit] = useState<AuditEntry[]>([]);
   const [tab, setTab] = useState<"sources" | "claims" | "audit">("sources");
@@ -177,15 +184,36 @@ export function Console() {
   }, [state.exchanges]);
 
   useEffect(() => {
+    let active = true;
     fetchIdentities()
       .then((tenants) => {
+        if (!active) return;
+        setGateRequired(false);
         setIdentities(tenants);
         const first = tenants[0];
         if (first && first.users.length > 0) setIdentity(toIdentity(first, first.users[0]));
       })
-      .catch((err) =>
-        setIdentitiesError(err instanceof Error ? err.message : "No se pudieron cargar las identidades."),
-      );
+      .catch((err) => {
+        if (!active) return;
+        if (err instanceof ApiError && err.status === 401) {
+          setGateRequired(true);
+          setGateError(getAccessToken() ? "Token inválido. Intenta de nuevo." : null);
+        } else {
+          setIdentitiesError(
+            err instanceof Error ? err.message : "No se pudieron cargar las identidades.",
+          );
+        }
+      });
+    return () => {
+      active = false;
+    };
+  }, [authReload]);
+
+  const submitToken = useCallback((token: string) => {
+    setAccessToken(token);
+    setGateError(null);
+    setIdentitiesError(null);
+    setAuthReload((n) => n + 1);
   }, []);
 
   useEffect(() => {
@@ -258,6 +286,10 @@ export function Console() {
   }, []);
 
   const focused = [...state.exchanges].reverse().find((e) => e.sources.length > 0) ?? null;
+
+  if (gateRequired) {
+    return <AccessGate onSubmit={submitToken} error={gateError} />;
+  }
 
   return (
     <div className="flex h-screen flex-col bg-slate-50">

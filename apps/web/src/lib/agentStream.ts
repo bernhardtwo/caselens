@@ -1,4 +1,4 @@
-import { API_BASE, authHeaders, type Identity } from "@/lib/api";
+import { accessHeaders, ApiError, API_BASE, authHeaders, type Identity } from "@/lib/api";
 
 export interface Passage {
   id: number | string;
@@ -64,12 +64,12 @@ export async function streamAgent(
 ): Promise<void> {
   const response = await fetch(`${API_BASE}/agent/stream`, {
     method: "POST",
-    headers: { "Content-Type": "application/json", ...authHeaders(identity) },
+    headers: { "Content-Type": "application/json", ...authHeaders(identity), ...accessHeaders() },
     body: JSON.stringify({ message }),
     signal,
   });
   if (!response.ok || !response.body) {
-    throw new Error(`El agente respondió ${response.status}.`);
+    throw new ApiError(response.status, `El agente respondió ${response.status}.`);
   }
 
   const reader = response.body.getReader();

@@ -1,6 +1,33 @@
 // Same-origin: every call goes to the Next proxy at /api/*, which forwards to the API.
 export const API_BASE = "/api";
 
+const ACCESS_TOKEN_KEY = "caselens_access_token";
+
+export function getAccessToken(): string | null {
+  if (typeof window === "undefined") return null;
+  return window.sessionStorage.getItem(ACCESS_TOKEN_KEY);
+}
+
+export function setAccessToken(token: string): void {
+  if (typeof window !== "undefined") window.sessionStorage.setItem(ACCESS_TOKEN_KEY, token);
+}
+
+// Demo access gate token, attached to every API call (the proxy forwards it). Empty when
+// the gate is off; the API then ignores it.
+export function accessHeaders(): Record<string, string> {
+  const token = getAccessToken();
+  return token ? { "X-Access-Token": token } : {};
+}
+
+export class ApiError extends Error {
+  readonly status: number;
+  constructor(status: number, message: string) {
+    super(message);
+    this.name = "ApiError";
+    this.status = status;
+  }
+}
+
 export interface IdentityUser {
   id: number;
   email: string;
@@ -43,8 +70,8 @@ export function authHeaders(identity: Identity | null): Record<string, string> {
 }
 
 export async function fetchIdentities(): Promise<Tenant[]> {
-  const response = await fetch(`${API_BASE}/dev/identities`);
-  if (!response.ok) throw new Error(`/dev/identities respondió ${response.status}.`);
+  const response = await fetch(`${API_BASE}/dev/identities`, { headers: accessHeaders() });
+  if (!response.ok) throw new ApiError(response.status, `/dev/identities respondió ${response.status}.`);
   const data = (await response.json()) as { tenants: Tenant[] };
   return data.tenants;
 }
@@ -67,7 +94,7 @@ export async function confirmAction(
 ): Promise<ConfirmOutcome> {
   const response = await fetch(`${API_BASE}/actions/confirm`, {
     method: "POST",
-    headers: { "Content-Type": "application/json", ...authHeaders(identity) },
+    headers: { "Content-Type": "application/json", ...authHeaders(identity), ...accessHeaders() },
     body: JSON.stringify({ claim_id: claimId, to_status: toStatus }),
   });
   if (response.ok) {
@@ -105,13 +132,17 @@ export interface AuditEntry {
 }
 
 export async function fetchClaims(identity: Identity): Promise<ClaimRow[]> {
-  const response = await fetch(`${API_BASE}/claims`, { headers: authHeaders(identity) });
-  if (!response.ok) throw new Error(`/claims respondió ${response.status}.`);
+  const response = await fetch(`${API_BASE}/claims`, {
+    headers: { ...authHeaders(identity), ...accessHeaders() },
+  });
+  if (!response.ok) throw new ApiError(response.status, `/claims respondió ${response.status}.`);
   return ((await response.json()) as { claims: ClaimRow[] }).claims;
 }
 
 export async function fetchAudit(identity: Identity): Promise<AuditEntry[]> {
-  const response = await fetch(`${API_BASE}/audit`, { headers: authHeaders(identity) });
-  if (!response.ok) throw new Error(`/audit respondió ${response.status}.`);
+  const response = await fetch(`${API_BASE}/audit`, {
+    headers: { ...authHeaders(identity), ...accessHeaders() },
+  });
+  if (!response.ok) throw new ApiError(response.status, `/audit respondió ${response.status}.`);
   return ((await response.json()) as { audit: AuditEntry[] }).audit;
 }
