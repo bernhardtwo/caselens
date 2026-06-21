@@ -1,4 +1,4 @@
-"""Manual smoke test: round-trips Command, Embed 4, and Rerank 4 on the live Cohere API.
+"""Manual smoke test: round-trips Command, Embed 4, and Rerank 3.5 on the live Cohere API.
 
 Run from apps/api with CO_API_KEY set (environment or .env):
 
@@ -15,7 +15,7 @@ from caselens.config.settings import get_settings
 
 CHAT_MODEL = "command-a-03-2025"
 EMBED_MODEL = "embed-v4.0"
-RERANK_MODEL = "rerank-v4.0-pro"
+RERANK_MODEL = "rerank-v3.5"
 
 
 def main() -> int:
@@ -54,7 +54,7 @@ def main() -> int:
     top = rerank.results[0]
     print(f"[rerank] {RERANK_MODEL}: top index {top.index}, score {top.relevance_score:.4f}")
 
-    print("OK: round-trip de Command + Embed 4 + Rerank 4 correcto.")
+    print("OK: round-trip de Command + Embed 4 + Rerank 3.5 correcto.")
     return 0
 
 
