@@ -9,9 +9,12 @@ from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
 from caselens.agent.loop import AgentEvent, AgentResult, EventType, run_agent, run_agent_events
+from caselens.agent.tools import apply_status_change
 from caselens.clients import MissingApiKeyError
+from caselens.data.db import connect
 from caselens.data.models import Role, TenantContext
 from caselens.rag.models import RetrievedChunk
+from caselens.security.audit import audit
 
 app = FastAPI(title="caselens")
 
@@ -98,3 +101,36 @@ def agent_stream(
             yield format_sse("error", {"detail": str(exc)})
 
     return StreamingResponse(generate(), media_type="text/event-stream")
+
+
+class ConfirmRequest(BaseModel):
+    claim_id: int
+    to_status: str
+
+
+@app.post("/actions/confirm")
+def confirm_action(
+    body: ConfirmRequest, ctx: Annotated[TenantContext, Depends(get_tenant_context)]
+) -> dict[str, Any]:
+    # Commit a proposed mutation through the same gated path, scoped to the caller's tenant.
+    conn = connect()
+    try:
+        result = apply_status_change(ctx, body.claim_id, body.to_status, conn=conn)
+        if result.get("denied"):
+            audit(
+                ctx,
+                "action.confirm_denied",
+                "claim",
+                str(body.claim_id),
+                {"reason": "rbac", "requested_status": body.to_status},
+                conn=conn,
+            )
+            conn.commit()
+            raise HTTPException(status_code=403, detail="El rol no puede confirmar la acción.")
+        if not result["ok"]:
+            reason = result["reason"]
+            code = 404 if "not found" in reason else 400 if "unknown status" in reason else 409
+            raise HTTPException(status_code=code, detail=reason)
+        return result
+    finally:
+        conn.close()
