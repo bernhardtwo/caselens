@@ -32,6 +32,10 @@ class Settings(BaseSettings):
 
     web_origin: str = "http://localhost:3000"
 
+    # Demo access gate: when set, every endpoint (except /health) requires this token.
+    # Unset means the gate is off (local dev runs open).
+    access_token: str | None = None
+
 
 @lru_cache
 def get_settings() -> Settings:

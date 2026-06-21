@@ -4,7 +4,7 @@ from collections.abc import Iterable, Iterator
 from dataclasses import asdict
 from typing import Annotated, Any
 
-from fastapi import Depends, FastAPI, Header, HTTPException
+from fastapi import Depends, FastAPI, Header, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
@@ -19,7 +19,20 @@ from caselens.data.repository import ClaimsRepository
 from caselens.rag.models import RetrievedChunk
 from caselens.security.audit import audit, list_audit
 
-app = FastAPI(title="caselens")
+
+def require_access(request: Request) -> None:
+    """Demo access gate. When ACCESS_TOKEN is set, every endpoint except /health requires a
+    matching X-Access-Token header (or access_token cookie). Unset means the gate is off.
+    This is not real auth; the tenant/role switcher remains the in-app demo control."""
+    token = get_settings().access_token
+    if not token or request.url.path == "/health":
+        return
+    provided = request.headers.get("X-Access-Token") or request.cookies.get("access_token")
+    if provided != token:
+        raise HTTPException(status_code=401, detail="Token de acceso inválido o ausente.")
+
+
+app = FastAPI(title="caselens", dependencies=[Depends(require_access)])
 
 # Dev console runs on a separate origin; allow it to call the API from the browser.
 app.add_middleware(
