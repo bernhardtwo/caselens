@@ -12,9 +12,10 @@ from caselens.agent.loop import AgentEvent, AgentResult, EventType, run_agent, r
 from caselens.agent.tools import apply_status_change
 from caselens.clients import MissingApiKeyError
 from caselens.data.db import connect
-from caselens.data.models import Role, TenantContext
+from caselens.data.models import AuditEntry, Claim, ClaimFilters, ClaimStatus, Role, TenantContext
+from caselens.data.repository import ClaimsRepository
 from caselens.rag.models import RetrievedChunk
-from caselens.security.audit import audit
+from caselens.security.audit import audit, list_audit
 
 app = FastAPI(title="caselens")
 
@@ -47,6 +48,31 @@ def serialize_source(chunk: RetrievedChunk) -> dict[str, Any]:
         "title": chunk.title,
         "section": chunk.section,
         "rerank_score": chunk.rerank_score,
+    }
+
+
+def serialize_claim(claim: Claim) -> dict[str, Any]:
+    return {
+        "id": claim.id,
+        "claimant_name": claim.claimant_name,
+        "product": claim.product,
+        "description": claim.description,
+        "status": claim.status.value,
+        "severity": claim.severity,
+        "cost_cents": claim.cost_cents,
+        "submitted_at": claim.submitted_at.isoformat(),
+    }
+
+
+def serialize_audit(entry: AuditEntry) -> dict[str, Any]:
+    return {
+        "id": entry.id,
+        "actor_user_id": entry.actor_user_id,
+        "action": entry.action,
+        "target_type": entry.target_type,
+        "target_id": entry.target_id,
+        "metadata": entry.metadata,
+        "created_at": entry.created_at.isoformat(),
     }
 
 
@@ -132,5 +158,37 @@ def confirm_action(
             code = 404 if "not found" in reason else 400 if "unknown status" in reason else 409
             raise HTTPException(status_code=code, detail=reason)
         return result
+    finally:
+        conn.close()
+
+
+@app.get("/claims")
+def list_claims(
+    ctx: Annotated[TenantContext, Depends(get_tenant_context)],
+    status: str | None = None,
+    product: str | None = None,
+    severity: str | None = None,
+) -> dict[str, Any]:
+    try:
+        status_filter = ClaimStatus(status) if status else None
+    except ValueError:
+        raise HTTPException(status_code=400, detail=f"Estado desconocido: {status}") from None
+    filters = ClaimFilters(status=status_filter, product=product, severity=severity)
+    conn = connect()
+    try:
+        claims = ClaimsRepository(conn).list(ctx, filters)
+        return {"claims": [serialize_claim(c) for c in claims]}
+    finally:
+        conn.close()
+
+
+@app.get("/audit")
+def get_audit(
+    ctx: Annotated[TenantContext, Depends(get_tenant_context)], limit: int = 100
+) -> dict[str, Any]:
+    conn = connect()
+    try:
+        entries = list_audit(ctx, conn=conn, limit=limit)
+        return {"audit": [serialize_audit(e) for e in entries]}
     finally:
         conn.close()
