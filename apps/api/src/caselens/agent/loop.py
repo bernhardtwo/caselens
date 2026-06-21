@@ -11,7 +11,9 @@ from caselens.clients import get_cohere_client
 from caselens.config.settings import Settings, get_settings
 from caselens.data.db import connect
 from caselens.data.models import TenantContext
-from caselens.rag.models import Citation, GroundedAnswer, RetrievedChunk
+from caselens.rag.answer import _citations as parse_citations
+from caselens.rag.answer import _document as to_document
+from caselens.rag.models import Citation, RetrievedChunk
 from caselens.security.audit import audit
 
 from .tools import AgentTool, ToolOutcome, build_tools
@@ -58,29 +60,6 @@ class AgentResult:
     actions_taken: list[dict[str, Any]]
 
 
-def _aggregate(grounded: list[GroundedAnswer]) -> tuple[list[RetrievedChunk], list[Citation]]:
-    """Merge sources and citations across rag_search calls, re-basing citation source indices."""
-    sources: list[RetrievedChunk] = []
-    citations: list[Citation] = []
-    for item in grounded:
-        base = len(sources)
-        sources.extend(item.sources)
-        for citation in item.citations:
-            remapped = []
-            for sid in citation.sources:
-                digits = "".join(ch for ch in sid if ch.isdigit())
-                remapped.append(str(base + int(digits)) if digits else sid)
-            citations.append(
-                Citation(
-                    start=citation.start,
-                    end=citation.end,
-                    text=citation.text,
-                    sources=remapped,
-                )
-            )
-    return sources, citations
-
-
 def run_agent_events(
     ctx: TenantContext,
     message: str,
@@ -111,12 +90,14 @@ def run_agent_events(
             {"role": "system", "content": _SYSTEM_PROMPT},
             {"role": "user", "content": message},
         ]
-        grounded: list[GroundedAnswer] = []
+        retrieved: list[RetrievedChunk] = []
+        documents: list[dict[str, Any]] = []
 
         resp = co.chat(
             model=settings.chat_model,
             messages=messages,
             tools=schemas,
+            documents=documents or None,
             temperature=settings.agent_temperature,
         )
         for _ in range(max_iterations):
@@ -160,29 +141,33 @@ def run_agent_events(
                     EventType.TOOL_RESULT,
                     {"name": name, "arguments": args, "result": outcome.result},
                 )
-                if outcome.grounded is not None:
-                    grounded.append(outcome.grounded)
+                if outcome.passages:
+                    retrieved.extend(outcome.passages)
                 if outcome.proposed is not None:
                     yield AgentEvent(EventType.ACTION_PROPOSED, outcome.proposed)
+            documents = [to_document(index, chunk) for index, chunk in enumerate(retrieved)]
             conn.commit()
             resp = co.chat(
                 model=settings.chat_model,
                 messages=messages,
                 tools=schemas,
+                documents=documents or None,
                 temperature=settings.agent_temperature,
             )
 
-        if resp.message.tool_calls:  # hit the iteration cap; force a final text answer
+        if resp.message.tool_calls:  # hit the iteration cap; force a final grounded answer
             resp = co.chat(
                 model=settings.chat_model,
                 messages=messages,
+                documents=documents or None,
                 temperature=settings.agent_temperature,
             )
         answer_text = resp.message.content[0].text if resp.message.content else ""
         yield AgentEvent(EventType.ANSWER, {"text": answer_text})
-        sources, citations = _aggregate(grounded)
-        if sources or citations:
-            yield AgentEvent(EventType.CITATIONS, {"citations": citations, "sources": sources})
+        if retrieved:
+            # Native citations from the final turn: offsets map to answer_text (ADR-0007).
+            citations = parse_citations(resp.message.citations)
+            yield AgentEvent(EventType.CITATIONS, {"citations": citations, "sources": retrieved})
     finally:
         if own_conn:
             conn.close()
