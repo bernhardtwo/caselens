@@ -196,10 +196,15 @@ uv run --project apps/api caselens-rag query "What does the warranty cover for a
 | `CO_API_KEY` | api | none | Cohere key for Command, Embed, and Rerank. Needed for ingest, `/agent`, `/agent/stream`, and the evals. |
 | `DATABASE_URL` | api | `postgresql://caselens:caselens@localhost:5432/caselens` | Postgres connection string. Point it at 5433 when using `POSTGRES_PORT=5433`. |
 | `WEB_ORIGIN` | api | `http://localhost:3000` | Origin allowed by CORS for the browser console. |
+| `ACCESS_TOKEN` | api | none | Shared token for the hosted-demo gate. When set, every endpoint except `/health` requires `X-Access-Token`; unset means open. |
 | `POSTGRES_PORT` | infra | `5432` | Host port for the Postgres container. |
 | `API_INTERNAL_URL` | web | `http://localhost:8000` | Upstream API for the web's same-origin `/api` proxy. Dev: `localhost:8000`; prod compose: `http://api:8000`. |
 
 Retrieval and agent behavior are tunable in `settings.py`: vector top-k (20), rerank top-n (5), chunk size and overlap, embedding dimension (1536), agent max iterations (6), and temperature (0.2).
+
+## Hosted demo access gate
+
+The hosted demo can sit behind a lightweight shared-token gate so the trial Cohere key is not exposed to open traffic. It activates only when `ACCESS_TOKEN` is set on the API (via `infra/.env.prod`): every endpoint except `/health` then requires a matching `X-Access-Token` header (or `access_token` cookie), returning 401 otherwise. The console prompts for the token once, stores it in `sessionStorage`, and attaches it to every call, including the SSE stream, through the same-origin `/api` proxy. With `ACCESS_TOKEN` unset the gate is off and local dev runs without friction. This is a demo gate, not real authentication; the tenant/role switcher remains the in-app control.
 
 ## Design decisions
 

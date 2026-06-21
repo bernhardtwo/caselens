@@ -52,6 +52,7 @@ services:
     env_file:
       - path: .env.prod
         required: false
+    # ACCESS_TOKEN (optional) is read from .env.prod; when set it activates the demo access gate.
     depends_on:
       postgres:
         condition: service_healthy
