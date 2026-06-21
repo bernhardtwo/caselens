@@ -1,5 +1,7 @@
 import json
+from collections.abc import Iterator
 from dataclasses import dataclass
+from enum import StrEnum
 from typing import Any
 
 import cohere
@@ -24,6 +26,20 @@ _SYSTEM_PROMPT = (
     "- Never invent claim data or policy. If a tool returns nothing, say so plainly.\n"
     "- Answer in the user's language, concisely."
 )
+
+
+class EventType(StrEnum):
+    TOOL_CALL = "tool_call"
+    TOOL_RESULT = "tool_result"
+    ANSWER = "answer"
+    CITATIONS = "citations"
+    ACTION_PROPOSED = "action_proposed"
+
+
+@dataclass(frozen=True)
+class AgentEvent:
+    type: EventType
+    data: dict[str, Any]
 
 
 @dataclass(frozen=True)
@@ -65,16 +81,19 @@ def _aggregate(grounded: list[GroundedAnswer]) -> tuple[list[RetrievedChunk], li
     return sources, citations
 
 
-def run_agent(
+def run_agent_events(
     ctx: TenantContext,
     message: str,
     *,
+    interactive: bool = False,
     co: cohere.ClientV2 | None = None,
     conn: psycopg.Connection | None = None,
     settings: Settings | None = None,
     tools: list[AgentTool] | None = None,
     max_iterations: int | None = None,
-) -> AgentResult:
+) -> Iterator[AgentEvent]:
+    """The agent loop as a stream of typed events. interactive=True makes mutations
+    propose (action_proposed) instead of committing; autonomous runs execute directly."""
     settings = settings or get_settings()
     max_iterations = max_iterations or settings.agent_max_iterations
     co = co or get_cohere_client(settings)
@@ -82,7 +101,9 @@ def run_agent(
     conn = conn or connect(settings)
     try:
         tools = (
-            tools if tools is not None else build_tools(ctx, conn=conn, co=co, settings=settings)
+            tools
+            if tools is not None
+            else build_tools(ctx, conn=conn, co=co, settings=settings, interactive=interactive)
         )
         by_name = {tool.name: tool for tool in tools}
         schemas = [tool.schema() for tool in tools]
@@ -90,8 +111,6 @@ def run_agent(
             {"role": "system", "content": _SYSTEM_PROMPT},
             {"role": "user", "content": message},
         ]
-        trace: list[ToolCallRecord] = []
-        actions: list[dict[str, Any]] = []
         grounded: list[GroundedAnswer] = []
 
         resp = co.chat(
@@ -113,6 +132,7 @@ def run_agent(
                     args = json.loads(call.function.arguments or "{}")
                 except json.JSONDecodeError:
                     args = {}
+                yield AgentEvent(EventType.TOOL_CALL, {"name": name, "arguments": args})
                 tool = by_name.get(name)
                 if tool is None:
                     outcome = ToolOutcome(result={"error": f"unknown tool: {name}"})
@@ -128,11 +148,6 @@ def run_agent(
                         "content": json.dumps(outcome.result, ensure_ascii=False),
                     }
                 )
-                trace.append(ToolCallRecord(name=name, arguments=args, result=outcome.result))
-                if outcome.grounded is not None:
-                    grounded.append(outcome.grounded)
-                if outcome.action is not None:
-                    actions.append(outcome.action)
                 audit(
                     ctx,
                     "agent.tool_call",
@@ -141,6 +156,14 @@ def run_agent(
                     {"ok": "error" not in outcome.result, "denied": outcome.denied},
                     conn=conn,
                 )
+                yield AgentEvent(
+                    EventType.TOOL_RESULT,
+                    {"name": name, "arguments": args, "result": outcome.result},
+                )
+                if outcome.grounded is not None:
+                    grounded.append(outcome.grounded)
+                if outcome.proposed is not None:
+                    yield AgentEvent(EventType.ACTION_PROPOSED, outcome.proposed)
             conn.commit()
             resp = co.chat(
                 model=settings.chat_model,
@@ -156,14 +179,66 @@ def run_agent(
                 temperature=settings.agent_temperature,
             )
         answer_text = resp.message.content[0].text if resp.message.content else ""
+        yield AgentEvent(EventType.ANSWER, {"text": answer_text})
         sources, citations = _aggregate(grounded)
-        return AgentResult(
-            answer=answer_text,
-            citations=citations,
-            sources=sources,
-            tool_trace=trace,
-            actions_taken=actions,
-        )
+        if sources or citations:
+            yield AgentEvent(EventType.CITATIONS, {"citations": citations, "sources": sources})
     finally:
         if own_conn:
             conn.close()
+
+
+def run_agent(
+    ctx: TenantContext,
+    message: str,
+    *,
+    co: cohere.ClientV2 | None = None,
+    conn: psycopg.Connection | None = None,
+    settings: Settings | None = None,
+    tools: list[AgentTool] | None = None,
+    max_iterations: int | None = None,
+) -> AgentResult:
+    """Non-streaming agent run: collects the autonomous event stream into an AgentResult."""
+    answer_text = ""
+    citations: list[Citation] = []
+    sources: list[RetrievedChunk] = []
+    trace: list[ToolCallRecord] = []
+    actions: list[dict[str, Any]] = []
+    for event in run_agent_events(
+        ctx,
+        message,
+        interactive=False,
+        co=co,
+        conn=conn,
+        settings=settings,
+        tools=tools,
+        max_iterations=max_iterations,
+    ):
+        if event.type == EventType.TOOL_RESULT:
+            result = event.data["result"]
+            trace.append(
+                ToolCallRecord(
+                    name=event.data["name"], arguments=event.data["arguments"], result=result
+                )
+            )
+            if result.get("action") == "update_claim_status" and result.get("ok"):
+                actions.append(
+                    {
+                        "action": "update_claim_status",
+                        "claim_id": result["claim_id"],
+                        "from": result["from"],
+                        "to": result["to"],
+                    }
+                )
+        elif event.type == EventType.ANSWER:
+            answer_text = event.data["text"]
+        elif event.type == EventType.CITATIONS:
+            citations = event.data["citations"]
+            sources = event.data["sources"]
+    return AgentResult(
+        answer=answer_text,
+        citations=citations,
+        sources=sources,
+        tool_trace=trace,
+        actions_taken=actions,
+    )

@@ -1,4 +1,14 @@
-from .loop import AgentResult, ToolCallRecord, run_agent
-from .tools import AgentTool, build_tools
+from .loop import AgentEvent, AgentResult, EventType, ToolCallRecord, run_agent, run_agent_events
+from .tools import AgentTool, apply_status_change, build_tools
 
-__all__ = ["AgentResult", "AgentTool", "ToolCallRecord", "build_tools", "run_agent"]
+__all__ = [
+    "AgentEvent",
+    "AgentResult",
+    "AgentTool",
+    "EventType",
+    "ToolCallRecord",
+    "apply_status_change",
+    "build_tools",
+    "run_agent",
+    "run_agent_events",
+]

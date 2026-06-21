@@ -38,7 +38,31 @@ class ToolOutcome:
     result: dict[str, Any]
     grounded: GroundedAnswer | None = None
     action: dict[str, Any] | None = None
+    proposed: dict[str, Any] | None = None
     denied: bool = False
+
+
+def apply_status_change(
+    ctx: TenantContext, claim_id: int, new_status: str, *, conn: psycopg.Connection
+) -> dict[str, Any]:
+    """The single gated mutation path: RBAC + transition + repo mutate. Callers audit denials."""
+    repo = ClaimsRepository(conn)
+    if not rbac.can(ctx, rbac.UPDATE_STATUS):
+        return {"ok": False, "denied": True, "reason": "role not permitted"}
+    try:
+        target = ClaimStatus(new_status)
+    except ValueError:
+        return {"ok": False, "reason": f"unknown status: {new_status}"}
+    current = repo.get(ctx, int(claim_id))
+    if current is None:
+        return {"ok": False, "reason": "claim not found"}
+    if not can_transition(current.status, target):
+        return {
+            "ok": False,
+            "reason": f"transition {current.status.value} -> {target.value} not allowed",
+        }
+    repo.update_status(ctx, int(claim_id), target)
+    return {"ok": True, "claim_id": int(claim_id), "from": current.status.value, "to": target.value}
 
 
 @dataclass(frozen=True)
@@ -76,9 +100,11 @@ def build_tools(
     conn: psycopg.Connection,
     co: cohere.ClientV2,
     settings: Settings | None = None,
+    interactive: bool = False,
 ) -> list[AgentTool]:
     """Tools bound to ctx. The tenant_id lives in this closure, never in a tool schema,
-    so a prompt-injected request for another tenant still runs under the bound ctx."""
+    so a prompt-injected request for another tenant still runs under the bound ctx.
+    interactive=True makes update_claim_status propose instead of commit."""
     settings = settings or get_settings()
     repo = ClaimsRepository(conn)
 
@@ -117,7 +143,28 @@ def build_tools(
 
     def update_claim_status(claim_id: int, new_status: str) -> ToolOutcome:
         claim_id = int(claim_id)
-        if not rbac.can(ctx, rbac.UPDATE_STATUS):
+        if interactive:
+            # Propose only: validate the transition and read current status, but never mutate.
+            # The RBAC gate moves to /actions/confirm, where a human approves the change.
+            current = repo.get(ctx, claim_id)
+            if current is None:
+                return ToolOutcome(result={"ok": False, "reason": "claim not found"})
+            try:
+                target = ClaimStatus(new_status)
+            except ValueError:
+                return ToolOutcome(result={"ok": False, "reason": f"unknown status: {new_status}"})
+            if not can_transition(current.status, target):
+                reason = f"transition {current.status.value} -> {target.value} not allowed"
+                return ToolOutcome(result={"ok": False, "reason": reason})
+            proposal = {
+                "claim_id": claim_id,
+                "from_status": current.status.value,
+                "to_status": target.value,
+            }
+            return ToolOutcome(result={"ok": True, "proposed": True, **proposal}, proposed=proposal)
+
+        result = apply_status_change(ctx, claim_id, new_status, conn=conn)
+        if result.get("denied"):
             audit(
                 ctx,
                 "agent.update_denied",
@@ -127,31 +174,16 @@ def build_tools(
                 conn=conn,
             )
             conn.commit()
-            return ToolOutcome(
-                result={"ok": False, "denied": True, "reason": "role not permitted"}, denied=True
-            )
-        try:
-            target = ClaimStatus(new_status)
-        except ValueError:
-            return ToolOutcome(result={"ok": False, "reason": f"unknown status: {new_status}"})
-        current = repo.get(ctx, claim_id)
-        if current is None:
-            return ToolOutcome(result={"ok": False, "reason": "claim not found"})
-        if not can_transition(current.status, target):
-            return ToolOutcome(
-                result={
-                    "ok": False,
-                    "reason": f"transition {current.status.value} -> {target.value} not allowed",
-                }
-            )
-        repo.update_status(ctx, claim_id, target)
-        action = {
-            "action": "update_claim_status",
-            "claim_id": claim_id,
-            "from": current.status.value,
-            "to": target.value,
-        }
-        return ToolOutcome(result={"ok": True, **action}, action=action)
+            return ToolOutcome(result=result, denied=True)
+        if result.get("ok"):
+            action = {
+                "action": "update_claim_status",
+                "claim_id": claim_id,
+                "from": result["from"],
+                "to": result["to"],
+            }
+            return ToolOutcome(result={"ok": True, **action}, action=action)
+        return ToolOutcome(result=result)
 
     return [
         AgentTool(
