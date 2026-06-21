@@ -91,13 +91,12 @@ def run_agent_events(
             {"role": "user", "content": message},
         ]
         retrieved: list[RetrievedChunk] = []
-        documents: list[dict[str, Any]] = []
 
         resp = co.chat(
             model=settings.chat_model,
             messages=messages,
             tools=schemas,
-            documents=documents or None,
+            citation_options={"mode": "fast"},
             temperature=settings.agent_temperature,
         )
         for _ in range(max_iterations):
@@ -122,13 +121,19 @@ def run_agent_events(
                         outcome = tool.run(**args)
                     except Exception as exc:  # report the failure to the model, keep the loop alive
                         outcome = ToolOutcome(result={"error": str(exc)})
-                messages.append(
-                    {
-                        "role": "tool",
-                        "tool_call_id": call.id,
-                        "content": json.dumps(outcome.result, ensure_ascii=False),
-                    }
-                )
+                # rag_search passages are returned as tool-result documents with explicit
+                # ids, the idiomatic Cohere tool-use grounding pattern, so the final answer
+                # carries citations referencing those ids (ADR-0007).
+                if outcome.passages:
+                    base = len(retrieved)
+                    content: str | list[dict[str, Any]] = [
+                        {"type": "document", "document": to_document(base + offset, chunk)}
+                        for offset, chunk in enumerate(outcome.passages)
+                    ]
+                    retrieved.extend(outcome.passages)
+                else:
+                    content = json.dumps(outcome.result, ensure_ascii=False)
+                messages.append({"role": "tool", "tool_call_id": call.id, "content": content})
                 audit(
                     ctx,
                     "agent.tool_call",
@@ -141,17 +146,14 @@ def run_agent_events(
                     EventType.TOOL_RESULT,
                     {"name": name, "arguments": args, "result": outcome.result},
                 )
-                if outcome.passages:
-                    retrieved.extend(outcome.passages)
                 if outcome.proposed is not None:
                     yield AgentEvent(EventType.ACTION_PROPOSED, outcome.proposed)
-            documents = [to_document(index, chunk) for index, chunk in enumerate(retrieved)]
             conn.commit()
             resp = co.chat(
                 model=settings.chat_model,
                 messages=messages,
                 tools=schemas,
-                documents=documents or None,
+                citation_options={"mode": "fast"},
                 temperature=settings.agent_temperature,
             )
 
@@ -159,7 +161,7 @@ def run_agent_events(
             resp = co.chat(
                 model=settings.chat_model,
                 messages=messages,
-                documents=documents or None,
+                citation_options={"mode": "fast"},
                 temperature=settings.agent_temperature,
             )
         answer_text = resp.message.content[0].text if resp.message.content else ""
