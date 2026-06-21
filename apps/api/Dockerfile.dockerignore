@@ -1,0 +1,13 @@
+.git
+.github
+docs
+eval
+apps/web
+**/node_modules
+**/.venv
+**/__pycache__
+**/*.pyc
+**/.next
+**/.pytest_cache
+**/.ruff_cache
+infra/.env*
