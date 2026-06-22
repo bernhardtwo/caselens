@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 # Provision CaseLens on Azure Container Apps + PostgreSQL Flexible Server (spec-0005, ADR-0004).
 # This does NOT build or push images; see docs/deploy/azure.md for the full runbook.
-# The bootstrap (init-db + ingest + seed) is idempotent; the az resource creates are not, so to
-# start over run: az group delete --name "$RG".
+# The bootstrap (init-db + ingest + seed) and the Postgres section are idempotent; the Container
+# Apps creates are not, so to start over run: az group delete --name "$RG".
 set -euo pipefail
 
 # ---- Parameters (override via environment) ----
@@ -39,13 +39,23 @@ echo "==> Resource group: $RG ($LOCATION)"
 az group create --name "$RG" --location "$LOCATION" --only-show-errors >/dev/null
 
 echo "==> PostgreSQL Flexible Server: $PG_SERVER (Burstable B1ms, v$PG_VERSION)"
-az postgres flexible-server create \
-  --resource-group "$RG" --name "$PG_SERVER" --location "$LOCATION" \
-  --tier Burstable --sku-name Standard_B1ms --version "$PG_VERSION" \
-  --storage-size 32 \
-  --admin-user "$PG_ADMIN_USER" --admin-password "$PG_ADMIN_PASSWORD" \
-  --database-name "$PG_DB" \
-  --public-access None --yes --only-show-errors
+# Idempotent: skip the create if the server already exists (e.g. a re-run after a partial failure).
+if az postgres flexible-server show --resource-group "$RG" --name "$PG_SERVER" --only-show-errors >/dev/null 2>&1; then
+  echo "    server already exists, skipping create"
+else
+  az postgres flexible-server create \
+    --resource-group "$RG" --name "$PG_SERVER" --location "$LOCATION" \
+    --tier Burstable --sku-name Standard_B1ms --version "$PG_VERSION" \
+    --storage-size 32 \
+    --admin-user "$PG_ADMIN_USER" --admin-password "$PG_ADMIN_PASSWORD" \
+    --public-access None --yes --only-show-errors >/dev/null
+fi
+
+# The database is a separate resource: the current az CLI rejects --database-name on a
+# (non-elastic) flexible-server create. Re-running is safe (db create is an ARM upsert).
+echo "==> Database: $PG_DB"
+az postgres flexible-server db create \
+  --resource-group "$RG" --server-name "$PG_SERVER" --name "$PG_DB" --only-show-errors >/dev/null
 
 echo "==> Allowlisting pgvector (azure.extensions = vector)"
 az postgres flexible-server parameter set \
@@ -54,15 +64,15 @@ az postgres flexible-server parameter set \
 
 echo "==> Firewall: allow Azure services (the 0.0.0.0 rule)"
 az postgres flexible-server firewall-rule create \
-  --resource-group "$RG" --name "$PG_SERVER" \
-  --rule-name AllowAzureServices \
+  --resource-group "$RG" --server-name "$PG_SERVER" \
+  --name AllowAzureServices \
   --start-ip-address 0.0.0.0 --end-ip-address 0.0.0.0 --only-show-errors >/dev/null
 
 if [ -n "$ALLOW_CLIENT_IP" ]; then
   echo "==> Firewall: allow client IP $ALLOW_CLIENT_IP (for a local bootstrap run)"
   az postgres flexible-server firewall-rule create \
-    --resource-group "$RG" --name "$PG_SERVER" \
-    --rule-name AllowClientIP \
+    --resource-group "$RG" --server-name "$PG_SERVER" \
+    --name AllowClientIP \
     --start-ip-address "$ALLOW_CLIENT_IP" --end-ip-address "$ALLOW_CLIENT_IP" --only-show-errors >/dev/null
 fi
 
