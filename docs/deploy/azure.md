@@ -1,15 +1,15 @@
 # Deploy to Azure Container Apps
 
 Runbook for hosting CaseLens on Azure (spec-0005, ADR-0004). It provisions one Azure Container Apps
-environment with two apps (a public web and an internal API), an Azure Database for PostgreSQL
-Flexible Server with pgvector, and a one-shot bootstrap that loads the schema, corpus, and seed data.
-Run the steps yourself; the script never runs automatically.
+environment with two apps (a public web and an internal API) against an external Neon Postgres
+(pgvector), plus a one-shot bootstrap that loads the schema, corpus, and seed data. Run the steps
+yourself; the script never runs automatically.
 
 ```
 Browser  ->  caselens-web (ACA, external ingress :3000)
                  |  same-origin /api proxy -> API_INTERNAL_URL
                  v
-             caselens-api (ACA, internal ingress :8000)  ->  PostgreSQL Flexible Server (pgvector)
+             caselens-api (ACA, internal ingress :8000)  ->  Neon Postgres (external, pgvector)
                  ^
              caselens-bootstrap (ACA job, run once) -------/
 ```
@@ -22,7 +22,8 @@ registry credentials:
 
 ## Prerequisites
 
-- Azure CLI (`az`) and an Azure subscription with quota for Container Apps and PostgreSQL.
+- Azure CLI (`az`) and an Azure subscription with quota for Container Apps.
+- A Neon project with pgvector for the database (any Postgres with pgvector works).
 - Docker (to build and push the images).
 - A GitHub Personal Access Token (classic) with `write:packages`, for pushing to ghcr.
 - A Cohere API key (`CO_API_KEY`).
@@ -31,6 +32,10 @@ registry credentials:
 az login
 az account set --subscription "<your-subscription-id>"   # if you have more than one
 ```
+
+Create a [Neon](https://neon.tech) project with the pgvector extension, then copy its **direct**
+connection string — the host with **no** `-pooler` suffix, ending in `?sslmode=require` — and export
+it as `DATABASE_URL`. The bootstrap creates the `vector` extension and the schema.
 
 ## 1. Build and push the images to ghcr
 
@@ -57,26 +62,26 @@ visibility -> Public, then repeat for `caselens-web`. (If you prefer to keep the
 
 ## 2. Provision Azure and trigger the bootstrap
 
-Export the required values and run the script. Optional overrides (`RG`, `LOCATION`, `PG_SERVER`,
-`ACCESS_TOKEN`, etc.) are read from the environment; see the top of the script.
+Export the three values the script reads — `DATABASE_URL`, `CO_API_KEY`, and `ACCESS_TOKEN` — and run
+the script. Optional overrides (`RG`, `LOCATION`, `ACA_ENV`, etc.) are read from the environment; see
+the top of the script.
 
 ```bash
+export DATABASE_URL="<neon-direct-connection-string>"   # direct host, ends in ?sslmode=require
 export CO_API_KEY="<your-cohere-key>"
-export PG_ADMIN_PASSWORD="<a-strong-password>"   # 8-128 chars, 3 of: upper, lower, digit, symbol
-export ACCESS_TOKEN="<demo-token>"               # optional; omit to run the demo open
-# export PG_SERVER="caselens-pg-bv"              # set a globally-unique name if the default is taken
+export ACCESS_TOKEN="<demo-token>"                      # gates the demo console; omit to run it open
 
 bash infra/deploy/azure-deploy.sh
 ```
 
-The script provisions, in order: the resource group, the Postgres Flexible Server (Burstable B1ms,
-v16), the pgvector allowlist (`azure.extensions=vector`) and the "allow Azure services" firewall
-rule, the Container Apps environment, the internal API app and the public web app (with their
-secrets), and finally the bootstrap job, which it starts. It prints the public console URL at the end.
+The script provisions, in order: the resource group, the Container Apps environment, the internal API
+app and the public web app (with their secrets), and finally the bootstrap job, which it starts. The
+database is your external Neon instance, reached over `DATABASE_URL`. It prints the public console URL
+at the end.
 
-`ACCESS_TOKEN`, `CO_API_KEY`, and `DATABASE_URL` are stored as ACA secrets and referenced as env
-vars (`secretref:`), never baked into the images. The web only receives `API_INTERNAL_URL`, pointing
-at the API's internal FQDN.
+`DATABASE_URL`, `CO_API_KEY`, and `ACCESS_TOKEN` are stored as ACA secrets and referenced as env vars
+(`secretref:`), never baked into the images. The web only receives `API_INTERNAL_URL`, pointing at the
+API's internal FQDN.
 
 ## 3. Verify the bootstrap
 
@@ -122,10 +127,11 @@ az group delete --name caselens-rg --yes --no-wait
 
 ## Cloud-agnostic note
 
-The same two images run unchanged on Google Cloud Run with Cloud SQL for PostgreSQL (pgvector
-enabled): point `DATABASE_URL` at the Cloud SQL instance, deploy `caselens-api` and `caselens-web`
-as Cloud Run services, and run the bootstrap as a Cloud Run Job. The container, not the cloud, is
-the unit of delivery.
+The database is decoupled through `DATABASE_URL`, so the same two images run against any Postgres
+with pgvector — here a Neon project, but Cloud SQL, RDS, or a self-hosted server work identically.
+The same images also run unchanged on Google Cloud Run: deploy `caselens-api` and `caselens-web` as
+Cloud Run services and run the bootstrap as a Cloud Run Job. The container, not the cloud, is the
+unit of delivery.
 
 ## Private images (alternative)
 

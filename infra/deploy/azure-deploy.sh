@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
-# Provision CaseLens on Azure Container Apps + PostgreSQL Flexible Server (spec-0005, ADR-0004).
+# Provision CaseLens on Azure Container Apps against an external Postgres (Neon) (spec-0005, ADR-0004).
 # This does NOT build or push images; see docs/deploy/azure.md for the full runbook.
-# The bootstrap (init-db + ingest + seed) and the Postgres section are idempotent; the Container
-# Apps creates are not, so to start over run: az group delete --name "$RG".
+# The bootstrap (init-db + ingest + seed) is idempotent; the Container Apps creates are not, so to
+# start over run: az group delete --name "$RG".
 set -euo pipefail
 
 # ---- Parameters (override via environment) ----
@@ -15,66 +15,18 @@ BOOTSTRAP_JOB="${BOOTSTRAP_JOB:-caselens-bootstrap}"
 API_IMAGE="${API_IMAGE:-ghcr.io/bernhardtwo/caselens-api:latest}"
 WEB_IMAGE="${WEB_IMAGE:-ghcr.io/bernhardtwo/caselens-web:latest}"
 
-PG_SERVER="${PG_SERVER:-caselens-pg}"   # must be globally unique; override if the name is taken
-PG_DB="${PG_DB:-caselens}"
-PG_ADMIN_USER="${PG_ADMIN_USER:-caselens}"
-PG_VERSION="${PG_VERSION:-16}"
-
 # ---- Required secrets (export before running) ----
 : "${CO_API_KEY:?export CO_API_KEY (your Cohere key)}"
-: "${PG_ADMIN_PASSWORD:?export PG_ADMIN_PASSWORD (a strong Postgres admin password)}"
+: "${DATABASE_URL:?export DATABASE_URL (your Neon connection string)}"
 ACCESS_TOKEN="${ACCESS_TOKEN:-}"       # optional; empty leaves the demo access gate off
-ALLOW_CLIENT_IP="${ALLOW_CLIENT_IP:-}" # optional; your public IP, only if you bootstrap locally
-
-PG_FQDN="${PG_SERVER}.postgres.database.azure.com"
-DATABASE_URL="postgresql://${PG_ADMIN_USER}:${PG_ADMIN_PASSWORD}@${PG_FQDN}:5432/${PG_DB}?sslmode=require"
 
 echo "==> Registering providers and the containerapp extension"
 az extension add --name containerapp --upgrade --only-show-errors
 az provider register --namespace Microsoft.App --wait
 az provider register --namespace Microsoft.OperationalInsights --wait
-az provider register --namespace Microsoft.DBforPostgreSQL --wait
 
 echo "==> Resource group: $RG ($LOCATION)"
 az group create --name "$RG" --location "$LOCATION" --only-show-errors >/dev/null
-
-echo "==> PostgreSQL Flexible Server: $PG_SERVER (Burstable B1ms, v$PG_VERSION)"
-# Idempotent: skip the create if the server already exists (e.g. a re-run after a partial failure).
-if az postgres flexible-server show --resource-group "$RG" --name "$PG_SERVER" --only-show-errors >/dev/null 2>&1; then
-  echo "    server already exists, skipping create"
-else
-  az postgres flexible-server create \
-    --resource-group "$RG" --name "$PG_SERVER" --location "$LOCATION" \
-    --tier Burstable --sku-name Standard_B1ms --version "$PG_VERSION" \
-    --storage-size 32 \
-    --admin-user "$PG_ADMIN_USER" --admin-password "$PG_ADMIN_PASSWORD" \
-    --public-access None --yes --only-show-errors >/dev/null
-fi
-
-# The database is a separate resource: the current az CLI rejects --database-name on a
-# (non-elastic) flexible-server create. Re-running is safe (db create is an ARM upsert).
-echo "==> Database: $PG_DB"
-az postgres flexible-server db create \
-  --resource-group "$RG" --server-name "$PG_SERVER" --name "$PG_DB" --only-show-errors >/dev/null
-
-echo "==> Allowlisting pgvector (azure.extensions = vector)"
-az postgres flexible-server parameter set \
-  --resource-group "$RG" --server-name "$PG_SERVER" \
-  --name azure.extensions --value vector --only-show-errors >/dev/null
-
-echo "==> Firewall: allow Azure services (the 0.0.0.0 rule)"
-az postgres flexible-server firewall-rule create \
-  --resource-group "$RG" --server-name "$PG_SERVER" \
-  --name AllowAzureServices \
-  --start-ip-address 0.0.0.0 --end-ip-address 0.0.0.0 --only-show-errors >/dev/null
-
-if [ -n "$ALLOW_CLIENT_IP" ]; then
-  echo "==> Firewall: allow client IP $ALLOW_CLIENT_IP (for a local bootstrap run)"
-  az postgres flexible-server firewall-rule create \
-    --resource-group "$RG" --server-name "$PG_SERVER" \
-    --name AllowClientIP \
-    --start-ip-address "$ALLOW_CLIENT_IP" --end-ip-address "$ALLOW_CLIENT_IP" --only-show-errors >/dev/null
-fi
 
 echo "==> Container Apps environment: $ACA_ENV"
 az containerapp env create \
