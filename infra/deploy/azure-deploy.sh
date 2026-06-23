@@ -43,39 +43,52 @@ if [ -n "$ACCESS_TOKEN" ]; then
   API_SECRETS+=("access-token=$ACCESS_TOKEN")
   API_ENV+=("ACCESS_TOKEN=secretref:access-token")
 fi
-az containerapp create \
-  --resource-group "$RG" --name "$API_APP" --environment "$ENV_ID" \
-  --image "$API_IMAGE" \
-  --ingress internal --target-port 8000 --transport http \
-  --min-replicas 0 --max-replicas 1 --cpu 0.5 --memory 1.0Gi \
-  --secrets "${API_SECRETS[@]}" \
-  --env-vars "${API_ENV[@]}" --only-show-errors >/dev/null
+# Idempotent: create each app/job only if it does not already exist. ponytail: create-or-skip,
+# not create-or-update — to change an existing spec, tear down $RG (footer) and re-run.
+if az containerapp show --resource-group "$RG" --name "$API_APP" --only-show-errors >/dev/null 2>&1; then
+  echo "    $API_APP already exists, skipping create"
+else
+  az containerapp create \
+    --resource-group "$RG" --name "$API_APP" --environment "$ENV_ID" \
+    --image "$API_IMAGE" \
+    --ingress internal --target-port 8000 --transport http \
+    --min-replicas 0 --max-replicas 1 --cpu 0.5 --memory 1.0Gi \
+    --secrets "${API_SECRETS[@]}" \
+    --env-vars "${API_ENV[@]}" --only-show-errors >/dev/null
+fi
 
 API_FQDN=$(az containerapp show --resource-group "$RG" --name "$API_APP" \
   --query properties.configuration.ingress.fqdn -o tsv)
 echo "    API internal FQDN: $API_FQDN"
 
 echo "==> Web app (external ingress, port 3000): $WEB_APP"
-az containerapp create \
-  --resource-group "$RG" --name "$WEB_APP" --environment "$ENV_ID" \
-  --image "$WEB_IMAGE" \
-  --ingress external --target-port 3000 \
-  --min-replicas 0 --max-replicas 1 --cpu 0.5 --memory 1.0Gi \
-  --env-vars "API_INTERNAL_URL=https://$API_FQDN" --only-show-errors >/dev/null
+if az containerapp show --resource-group "$RG" --name "$WEB_APP" --only-show-errors >/dev/null 2>&1; then
+  echo "    $WEB_APP already exists, skipping create"
+else
+  az containerapp create \
+    --resource-group "$RG" --name "$WEB_APP" --environment "$ENV_ID" \
+    --image "$WEB_IMAGE" \
+    --ingress external --target-port 3000 \
+    --min-replicas 0 --max-replicas 1 --cpu 0.5 --memory 1.0Gi \
+    --env-vars "API_INTERNAL_URL=https://$API_FQDN" --only-show-errors >/dev/null
+fi
 
 echo "==> Bootstrap job (run-to-completion): $BOOTSTRAP_JOB"
-az containerapp job create \
-  --resource-group "$RG" --name "$BOOTSTRAP_JOB" --environment "$ENV_ID" \
-  --image "$API_IMAGE" \
-  --trigger-type Manual \
-  --replica-timeout 1800 --replica-retry-limit 1 \
-  --replica-completion-count 1 --parallelism 1 \
-  --cpu 0.5 --memory 1.0Gi \
-  --secrets "co-api-key=$CO_API_KEY" "database-url=$DATABASE_URL" \
-  --env-vars "CO_API_KEY=secretref:co-api-key" "DATABASE_URL=secretref:database-url" \
-  --command "/bin/sh" "-c" \
-  "set -e; until caselens-rag init-db; do echo 'waiting for postgres'; sleep 3; done; caselens-rag ingest; caselens-seed" \
-  --only-show-errors >/dev/null
+if az containerapp job show --resource-group "$RG" --name "$BOOTSTRAP_JOB" --only-show-errors >/dev/null 2>&1; then
+  echo "    $BOOTSTRAP_JOB already exists, skipping create"
+else
+  az containerapp job create \
+    --resource-group "$RG" --name "$BOOTSTRAP_JOB" --environment "$ENV_ID" \
+    --image "$API_IMAGE" \
+    --trigger-type Manual \
+    --replica-timeout 1800 --replica-retry-limit 1 \
+    --replica-completion-count 1 --parallelism 1 \
+    --cpu 0.5 --memory 1.0Gi \
+    --secrets "co-api-key=$CO_API_KEY" "database-url=$DATABASE_URL" \
+    --env-vars "CO_API_KEY=secretref:co-api-key" "DATABASE_URL=secretref:database-url" \
+    --command "caselens-bootstrap" \
+    --only-show-errors >/dev/null
+fi
 
 echo "==> Starting the bootstrap job"
 az containerapp job start --resource-group "$RG" --name "$BOOTSTRAP_JOB" --only-show-errors >/dev/null
