@@ -4,6 +4,7 @@ from typing import Any
 import psycopg
 
 from caselens.data.models import AuditEntry, TenantContext
+from caselens.data.pool import db_connection
 
 _INSERT = (
     "INSERT INTO audit_log (tenant_id, actor_user_id, action, target_type, target_id, metadata) "
@@ -38,6 +39,21 @@ def audit(
                 json.dumps(metadata or {}),
             ),
         )
+
+
+def audit_isolated(
+    ctx: TenantContext,
+    action: str,
+    target_type: str,
+    target_id: str | None,
+    metadata: dict[str, Any] | None = None,
+) -> None:
+    """Write one audit row on a dedicated connection that commits immediately, independent of any
+    caller transaction. Use when the record must survive even if the caller's transaction aborted
+    (the agent loop after a failed tool)."""
+    with db_connection() as conn:
+        audit(ctx, action, target_type, target_id, metadata, conn=conn)
+        conn.commit()
 
 
 def list_audit(

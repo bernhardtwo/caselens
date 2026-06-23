@@ -15,7 +15,7 @@ from caselens.data.pool import db_connection
 from caselens.rag.answer import citations as parse_citations
 from caselens.rag.answer import document as to_document
 from caselens.rag.models import Citation, RetrievedChunk
-from caselens.security.audit import audit
+from caselens.security.audit import audit_isolated
 
 from .tools import AgentTool, ToolOutcome, build_tools
 
@@ -123,6 +123,9 @@ def run_agent_events(
                     try:
                         outcome = tool.run(**args)
                     except Exception as exc:  # report the failure to the model, keep the loop alive
+                        # Contain it: roll back the failed op's aborted transaction so the shared
+                        # connection stays usable for the rest of the loop and the iteration commit.
+                        conn.rollback()
                         outcome = ToolOutcome(result={"error": str(exc)})
                 # rag_search passages are returned as tool-result documents with explicit
                 # ids, the idiomatic Cohere tool-use grounding pattern, so the final answer
@@ -137,13 +140,14 @@ def run_agent_events(
                 else:
                     content = json.dumps(outcome.result, ensure_ascii=False)
                 messages.append({"role": "tool", "tool_call_id": call.id, "content": content})
-                audit(
+                # Audit on a dedicated connection so the record is written even if the tool
+                # failed and poisoned `conn`; it never depends on the tool's transaction state.
+                audit_isolated(
                     ctx,
                     "agent.tool_call",
                     "tool",
                     name,
                     {"ok": "error" not in outcome.result, "denied": outcome.denied},
-                    conn=conn,
                 )
                 yield AgentEvent(
                     EventType.TOOL_RESULT,
