@@ -1,9 +1,9 @@
 # Deploy to Azure Container Apps
 
-Runbook for hosting CaseLens on Azure (spec-0005, ADR-0004). It provisions one Azure Container Apps
-environment with two apps (a public web and an internal API) against an external Neon Postgres
-(pgvector), plus a one-shot bootstrap that loads the schema, corpus, and seed data. Run the steps
-yourself; the script never runs automatically.
+Runbook for hosting CaseLens on Azure (spec-0005, ADR-0004). It deploys two apps (a public web and an
+internal API) into an existing, shared Azure Container Apps environment, against an external Neon
+Postgres (pgvector), plus a one-shot bootstrap that loads the schema, corpus, and seed data. Run the
+steps yourself; the script never runs automatically.
 
 ```
 Browser  ->  caselens-web (ACA, external ingress :3000)
@@ -23,6 +23,9 @@ registry credentials:
 ## Prerequisites
 
 - Azure CLI (`az`) and an Azure subscription with quota for Container Apps.
+- An existing Container Apps environment to reuse — the student subscription allows only one, and
+  `ledgerlens-env` (resource group `rg-ledgerlens`, Central US) already exists. Override via `ACA_ENV`
+  and `ACA_ENV_RG`.
 - A Neon project with pgvector for the database (any Postgres with pgvector works).
 - Docker (to build and push the images).
 - A GitHub Personal Access Token (classic) with `write:packages`, for pushing to ghcr.
@@ -63,8 +66,9 @@ visibility -> Public, then repeat for `caselens-web`. (If you prefer to keep the
 ## 2. Provision Azure and trigger the bootstrap
 
 Export the three values the script reads — `DATABASE_URL`, `CO_API_KEY`, and `ACCESS_TOKEN` — and run
-the script. Optional overrides (`RG`, `LOCATION`, `ACA_ENV`, etc.) are read from the environment; see
-the top of the script.
+the script. Optional overrides (`RG`, `LOCATION`, `ACA_ENV`, `ACA_ENV_RG`, etc.) are read from the
+environment; see the top of the script. The apps join the existing `ACA_ENV` environment, so
+`LOCATION` must match that environment's region (default `centralus`).
 
 ```bash
 export DATABASE_URL="<neon-direct-connection-string>"   # direct host, ends in ?sslmode=require
@@ -74,10 +78,11 @@ export ACCESS_TOKEN="<demo-token>"                      # gates the demo console
 bash infra/deploy/azure-deploy.sh
 ```
 
-The script provisions, in order: the resource group, the Container Apps environment, the internal API
-app and the public web app (with their secrets), and finally the bootstrap job, which it starts. The
-database is your external Neon instance, reached over `DATABASE_URL`. It prints the public console URL
-at the end.
+The script provisions, in order: the CaseLens resource group, then the internal API app, the public
+web app (with their secrets), and the bootstrap job — all three into the existing shared environment
+(`ACA_ENV` in `ACA_ENV_RG`), referenced by its resource ID so they can live in their own resource
+group. The database is your external Neon instance, reached over `DATABASE_URL`. It prints the public
+console URL at the end.
 
 `DATABASE_URL`, `CO_API_KEY`, and `ACCESS_TOKEN` are stored as ACA secrets and referenced as env vars
 (`secretref:`), never baked into the images. The web only receives `API_INTERNAL_URL`, pointing at the
@@ -117,13 +122,16 @@ If you set `ACCESS_TOKEN`, the console asks for it once; paste the same token. T
 may cold-start the apps (they scale to zero when idle). The tenant/role switcher remains the in-app
 control once you are in.
 
-## 5. Tear everything down
+## 5. Tear CaseLens down
 
-Delete the whole resource group when done so nothing keeps billing:
+Delete the CaseLens resource group when done so nothing keeps billing:
 
 ```bash
 az group delete --name caselens-rg --yes --no-wait
 ```
+
+This removes only CaseLens's own apps, bootstrap job, and resource group. The shared `ledgerlens-env`
+environment lives in `rg-ledgerlens` and is left untouched, so LedgerLens keeps running.
 
 ## Cloud-agnostic note
 

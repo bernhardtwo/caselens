@@ -7,8 +7,9 @@ set -euo pipefail
 
 # ---- Parameters (override via environment) ----
 RG="${RG:-caselens-rg}"
-LOCATION="${LOCATION:-eastus}"
-ACA_ENV="${ACA_ENV:-caselens-env}"
+LOCATION="${LOCATION:-centralus}"         # region of the shared ACA environment
+ACA_ENV="${ACA_ENV:-ledgerlens-env}"      # existing shared environment to reuse
+ACA_ENV_RG="${ACA_ENV_RG:-rg-ledgerlens}" # resource group that owns ACA_ENV
 API_APP="${API_APP:-caselens-api}"
 WEB_APP="${WEB_APP:-caselens-web}"
 BOOTSTRAP_JOB="${BOOTSTRAP_JOB:-caselens-bootstrap}"
@@ -28,9 +29,10 @@ az provider register --namespace Microsoft.OperationalInsights --wait
 echo "==> Resource group: $RG ($LOCATION)"
 az group create --name "$RG" --location "$LOCATION" --only-show-errors >/dev/null
 
-echo "==> Container Apps environment: $ACA_ENV"
-az containerapp env create \
-  --resource-group "$RG" --name "$ACA_ENV" --location "$LOCATION" --only-show-errors >/dev/null
+echo "==> Reusing shared Container Apps environment: $ACA_ENV (in $ACA_ENV_RG)"
+# Reference the existing environment by resource ID so the apps can live in their own RG ($RG)
+# while sharing an environment that lives elsewhere.
+ENV_ID=$(az containerapp env show --name "$ACA_ENV" --resource-group "$ACA_ENV_RG" --query id -o tsv)
 
 echo "==> API app (internal ingress, port 8000): $API_APP"
 # Public ghcr images need no registry credentials. The gate secret is set only when ACCESS_TOKEN
@@ -42,7 +44,7 @@ if [ -n "$ACCESS_TOKEN" ]; then
   API_ENV+=("ACCESS_TOKEN=secretref:access-token")
 fi
 az containerapp create \
-  --resource-group "$RG" --name "$API_APP" --environment "$ACA_ENV" \
+  --resource-group "$RG" --name "$API_APP" --environment "$ENV_ID" \
   --image "$API_IMAGE" \
   --ingress internal --target-port 8000 --transport http \
   --min-replicas 0 --max-replicas 1 --cpu 0.5 --memory 1.0Gi \
@@ -55,7 +57,7 @@ echo "    API internal FQDN: $API_FQDN"
 
 echo "==> Web app (external ingress, port 3000): $WEB_APP"
 az containerapp create \
-  --resource-group "$RG" --name "$WEB_APP" --environment "$ACA_ENV" \
+  --resource-group "$RG" --name "$WEB_APP" --environment "$ENV_ID" \
   --image "$WEB_IMAGE" \
   --ingress external --target-port 3000 \
   --min-replicas 0 --max-replicas 1 --cpu 0.5 --memory 1.0Gi \
@@ -63,7 +65,7 @@ az containerapp create \
 
 echo "==> Bootstrap job (run-to-completion): $BOOTSTRAP_JOB"
 az containerapp job create \
-  --resource-group "$RG" --name "$BOOTSTRAP_JOB" --environment "$ACA_ENV" \
+  --resource-group "$RG" --name "$BOOTSTRAP_JOB" --environment "$ENV_ID" \
   --image "$API_IMAGE" \
   --trigger-type Manual \
   --replica-timeout 1800 --replica-retry-limit 1 \
@@ -85,5 +87,5 @@ echo
 echo "Done. Public console: https://$WEB_FQDN"
 echo "The bootstrap runs once in the background. Check it with:"
 echo "  az containerapp job execution list -g \"$RG\" --name \"$BOOTSTRAP_JOB\" -o table"
-echo "Tear everything down (stop billing) with:"
+echo "Tear CaseLens down (stop billing) with — leaves the shared $ACA_ENV environment intact:"
 echo "  az group delete --name \"$RG\" --yes --no-wait"
