@@ -14,7 +14,7 @@ class CitationError(RuntimeError):
     """Raised when an answer over documents carries no citations (ADR-0002)."""
 
 
-def _document(index: int, chunk: RetrievedChunk) -> dict:
+def document(index: int, chunk: RetrievedChunk) -> dict:
     return {
         "id": str(index),
         "data": {
@@ -35,7 +35,7 @@ def _leading_int(value: str) -> int | None:
     return int(digits) if digits else None
 
 
-def _citations(raw: list | None) -> list[Citation]:
+def citations(raw: list | None) -> list[Citation]:
     citations: list[Citation] = []
     for item in raw or []:
         ids: list[str] = []
@@ -53,17 +53,17 @@ def _citations(raw: list | None) -> list[Citation]:
 def build_answer(
     query: str, chunks: Sequence[RetrievedChunk], *, co: cohere.ClientV2, settings: Settings
 ) -> GroundedAnswer:
-    documents = [_document(i, chunk) for i, chunk in enumerate(chunks)]
+    documents = [document(i, chunk) for i, chunk in enumerate(chunks)]
     resp = co.chat(
         model=settings.chat_model,
         messages=[{"role": "user", "content": query}],
         documents=documents,
     )
     text = resp.message.content[0].text if resp.message.content else ""
-    citations = _citations(resp.message.citations)
-    if documents and not citations:
+    parsed = citations(resp.message.citations)
+    if documents and not parsed:
         raise CitationError("La respuesta no cita ninguna fuente sobre los documentos (ADR-0002).")
-    return GroundedAnswer(text=text, citations=citations, sources=list(chunks))
+    return GroundedAnswer(text=text, citations=parsed, sources=list(chunks))
 
 
 def cited_sources(answer: GroundedAnswer) -> set[str]:

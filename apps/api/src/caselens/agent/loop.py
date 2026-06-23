@@ -11,8 +11,8 @@ from caselens.clients import get_cohere_client
 from caselens.config.settings import Settings, get_settings
 from caselens.data.db import connect
 from caselens.data.models import TenantContext
-from caselens.rag.answer import _citations as parse_citations
-from caselens.rag.answer import _document as to_document
+from caselens.rag.answer import citations as parse_citations
+from caselens.rag.answer import document as to_document
 from caselens.rag.models import Citation, RetrievedChunk
 from caselens.security.audit import audit
 
