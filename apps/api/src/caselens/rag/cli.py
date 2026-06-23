@@ -1,5 +1,4 @@
 import argparse
-import glob
 import os
 import sys
 
@@ -8,9 +7,7 @@ from caselens.data.db import apply_schema as apply_data_schema
 
 from .answer import answer, cited_sources
 from .db import connect, init_db
-from .ingest import ingest_documents
-
-_CORPUS_GLOB = "data/corpus/*.md"
+from .ingest import default_corpus_paths, ingest_documents
 
 
 def _dispatch(args: argparse.Namespace) -> int:
@@ -22,7 +19,7 @@ def _dispatch(args: argparse.Namespace) -> int:
         return 0
 
     if args.command == "ingest":
-        paths = args.paths or sorted(glob.glob(_CORPUS_GLOB))
+        paths = args.paths or default_corpus_paths()
         if not paths:
             print("No se encontraron documentos para ingerir.", file=sys.stderr)
             return 1

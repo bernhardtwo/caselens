@@ -147,6 +147,27 @@ def _truncate(conn: psycopg.Connection) -> None:
     conn.commit()
 
 
+def seed_database(
+    *,
+    tenants: int = 3,
+    users: int = 3,
+    claims: int = 12,
+    rng_seed: int = 0,
+    reset: bool = False,
+) -> dict[str, int]:
+    """Apply the schema and insert generated drafts; return per-table counts.
+
+    Idempotent unless reset=True. Shared by the caselens-seed CLI and the bootstrap so
+    neither has to go through argparse to seed.
+    """
+    drafts = generate(tenants, users, claims, seed=rng_seed)
+    with connect() as conn:
+        apply_schema(conn)
+        if reset:
+            _truncate(conn)
+        return seed(conn, drafts)
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
         prog="caselens-seed", description="Siembra claims sintéticos multi-tenant (spec-0002)."
@@ -159,12 +180,13 @@ def main(argv: list[str] | None = None) -> int:
         "--reset", action="store_true", help="Vacía las tablas del data layer antes de sembrar."
     )
     args = parser.parse_args(argv)
-    drafts = generate(args.tenants, args.users, args.claims, seed=args.seed)
-    with connect() as conn:
-        apply_schema(conn)
-        if args.reset:
-            _truncate(conn)
-        counts = seed(conn, drafts)
+    counts = seed_database(
+        tenants=args.tenants,
+        users=args.users,
+        claims=args.claims,
+        rng_seed=args.seed,
+        reset=args.reset,
+    )
     if counts["tenants"] == 0:
         print("Datos ya presentes; no se sembró (idempotente). Usa --reset para resembrar.")
     else:

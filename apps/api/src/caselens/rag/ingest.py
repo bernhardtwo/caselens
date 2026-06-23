@@ -1,3 +1,4 @@
+import glob
 import hashlib
 import json
 import os
@@ -12,6 +13,14 @@ from .chunking import chunk_markdown, load_document
 from .db import connect, to_vector_literal
 from .embed import embed_passages
 from .models import IngestReport
+
+_CORPUS_GLOB = "data/corpus/*.md"
+
+
+def default_corpus_paths() -> list[str]:
+    """Markdown files under data/corpus, sorted. Resolved against the process CWD (the
+    container's WORKDIR, or the repo root in local dev), matching the caselens-rag CLI."""
+    return sorted(glob.glob(_CORPUS_GLOB))
 
 
 def _hash(text: str) -> str:

@@ -1,8 +1,9 @@
-"""One-shot deploy bootstrap: init-db (with retry) -> ingest -> seed.
+"""One-shot deploy bootstrap: schema (with retry) -> ingest -> seed.
 
-Wraps the existing caselens-rag and caselens-seed entry points so a container job can run
-the whole sequence as a single command. Each step is idempotent, so re-running is safe;
-init-db is retried while Postgres is still unreachable (a Neon instance may cold start).
+Calls the data-layer functions directly instead of the argparse CLIs, so the caselens-bootstrap
+entry point cannot be derailed by how the container passes (or omits) argv. Each step is
+idempotent, so re-running is safe; the schema step is retried while Postgres is still unreachable
+(a Neon instance may cold start).
 """
 
 import sys
@@ -10,45 +11,53 @@ import time
 
 import psycopg
 
-from caselens.data.generators import main as seed_main
-from caselens.rag.cli import main as rag_main
+from caselens.data.db import apply_schema as apply_data_schema
+from caselens.data.generators import seed_database
+from caselens.rag.db import connect, init_db
+from caselens.rag.ingest import default_corpus_paths, ingest_documents
 
 _RETRY_BASE_SECONDS = 2.0
 _RETRY_MAX_SECONDS = 30.0
 _RETRY_DEADLINE_SECONDS = 300.0
 
 
-def _init_db_with_retry() -> int:
-    """Run `caselens-rag init-db`, retrying while Postgres refuses connections.
+def init_databases() -> None:
+    """Create the rag and data schemas, retrying while Postgres refuses connections.
 
-    Backs off exponentially (capped at _RETRY_MAX_SECONDS) until _RETRY_DEADLINE_SECONDS,
-    then gives up. Only connection failures are retried; any other error fails fast.
+    Backs off exponentially (capped at _RETRY_MAX_SECONDS) until _RETRY_DEADLINE_SECONDS, then
+    re-raises. Only connection failures are retried; any other error fails fast.
     """
     deadline = time.monotonic() + _RETRY_DEADLINE_SECONDS
     delay = _RETRY_BASE_SECONDS
     while True:
         try:
-            return rag_main(["init-db"])
+            with connect() as conn:
+                init_db(conn)
+                apply_data_schema(conn)
+            return
         except psycopg.OperationalError as exc:
             if time.monotonic() >= deadline:
-                print(f"Postgres no respondió a tiempo: {exc}", file=sys.stderr)
-                return 1
+                raise
             print(f"Esperando a Postgres; reintento en {delay:.0f}s ({exc})", file=sys.stderr)
             time.sleep(delay)
             delay = min(delay * 2, _RETRY_MAX_SECONDS)
 
 
+def ingest_corpus() -> None:
+    """Ingest the default corpus; fail loudly if no documents are found."""
+    paths = default_corpus_paths()
+    if not paths:
+        raise FileNotFoundError("No se encontraron documentos en data/corpus para ingerir.")
+    report = ingest_documents(paths)
+    print(f"Ingeridos {report.documents_ingested} documentos ({report.chunks_written} chunks).")
+
+
 def main() -> int:
-    """init-db (retried) -> ingest -> seed, stopping at the first non-zero step."""
-    steps = (
-        _init_db_with_retry,
-        lambda: rag_main(["ingest"]),
-        lambda: seed_main([]),
-    )
-    for step in steps:
-        rc = step()
-        if rc != 0:
-            return rc
+    """Schema (retried) -> ingest -> seed. Any failure propagates, so the job exits non-zero."""
+    init_databases()
+    ingest_corpus()
+    counts = seed_database()
+    print(f"Seed: {counts['tenants']} tenants, {counts['users']} users, {counts['claims']} claims.")
     return 0
 
 
