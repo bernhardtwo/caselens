@@ -90,8 +90,13 @@ API's internal FQDN.
 
 ## 3. Verify the bootstrap
 
-The bootstrap job runs `init-db` (retried until Postgres answers), then `ingest`, then `seed`, all
-idempotent, so re-running it never duplicates data.
+The bootstrap job runs the `caselens-bootstrap` entry point to completion against your Neon database:
+`init-db` (retried until Postgres answers), then `ingest`, then `seed`, all idempotent, so re-running
+it never duplicates data.
+
+The job always runs the `:latest` API image, which is where `caselens-bootstrap` lives. After any
+change to the API code, rebuild and repush the API image (step 1) before re-running the script or
+restarting the job, or it will run a stale image without the new entry point.
 
 ```bash
 az containerapp job execution list -g caselens-rg --name caselens-bootstrap -o table
