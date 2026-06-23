@@ -35,16 +35,19 @@ echo "==> Reusing shared Container Apps environment: $ACA_ENV (in $ACA_ENV_RG)"
 ENV_ID=$(az containerapp env show --name "$ACA_ENV" --resource-group "$ACA_ENV_RG" --query id -o tsv)
 
 echo "==> API app (internal ingress, port 8000): $API_APP"
-# Public ghcr images need no registry credentials. The gate secret is set only when ACCESS_TOKEN
-# is non-empty, otherwise the API runs open.
-API_SECRETS=("co-api-key=$CO_API_KEY" "database-url=$DATABASE_URL")
-API_ENV=("CO_API_KEY=secretref:co-api-key" "DATABASE_URL=secretref:database-url")
+# Public ghcr images need no registry credentials. The API and the bootstrap job share the same
+# DATABASE_URL and CO_API_KEY wiring (built once here as BASE_SECRETS/BASE_ENV); the API adds the
+# access-gate secret only when ACCESS_TOKEN is non-empty, otherwise it runs open.
+BASE_SECRETS=("co-api-key=$CO_API_KEY" "database-url=$DATABASE_URL")
+BASE_ENV=("CO_API_KEY=secretref:co-api-key" "DATABASE_URL=secretref:database-url")
+API_SECRETS=("${BASE_SECRETS[@]}")
+API_ENV=("${BASE_ENV[@]}")
 if [ -n "$ACCESS_TOKEN" ]; then
   API_SECRETS+=("access-token=$ACCESS_TOKEN")
   API_ENV+=("ACCESS_TOKEN=secretref:access-token")
 fi
-# Idempotent: create each app/job only if it does not already exist. ponytail: create-or-skip,
-# not create-or-update — to change an existing spec, tear down $RG (footer) and re-run.
+# The api and web apps are create-or-skip (they already work). The bootstrap job is instead
+# delete-and-recreate (below), so a redeploy always picks up the current command, secrets, and env.
 if az containerapp show --resource-group "$RG" --name "$API_APP" --only-show-errors >/dev/null 2>&1; then
   echo "    $API_APP already exists, skipping create"
 else
@@ -74,21 +77,24 @@ else
 fi
 
 echo "==> Bootstrap job (run-to-completion): $BOOTSTRAP_JOB"
+# Delete-and-recreate (not create-or-skip): a stale job keeps its old command/secrets/env, which is
+# how a missing DATABASE_URL can silently survive a redeploy. Recreating guarantees the job gets the
+# same DATABASE_URL + CO_API_KEY wiring as the API app (BASE_SECRETS/BASE_ENV).
 if az containerapp job show --resource-group "$RG" --name "$BOOTSTRAP_JOB" --only-show-errors >/dev/null 2>&1; then
-  echo "    $BOOTSTRAP_JOB already exists, skipping create"
-else
-  az containerapp job create \
-    --resource-group "$RG" --name "$BOOTSTRAP_JOB" --environment "$ENV_ID" \
-    --image "$API_IMAGE" \
-    --trigger-type Manual \
-    --replica-timeout 1800 --replica-retry-limit 1 \
-    --replica-completion-count 1 --parallelism 1 \
-    --cpu 0.5 --memory 1.0Gi \
-    --secrets "co-api-key=$CO_API_KEY" "database-url=$DATABASE_URL" \
-    --env-vars "CO_API_KEY=secretref:co-api-key" "DATABASE_URL=secretref:database-url" \
-    --command "caselens-bootstrap" \
-    --only-show-errors >/dev/null
+  echo "    $BOOTSTRAP_JOB exists, deleting to recreate with the current definition"
+  az containerapp job delete --resource-group "$RG" --name "$BOOTSTRAP_JOB" --yes --only-show-errors >/dev/null
 fi
+az containerapp job create \
+  --resource-group "$RG" --name "$BOOTSTRAP_JOB" --environment "$ENV_ID" \
+  --image "$API_IMAGE" \
+  --trigger-type Manual \
+  --replica-timeout 1800 --replica-retry-limit 1 \
+  --replica-completion-count 1 --parallelism 1 \
+  --cpu 0.5 --memory 1.0Gi \
+  --secrets "${BASE_SECRETS[@]}" \
+  --env-vars "${BASE_ENV[@]}" \
+  --command "caselens-bootstrap" \
+  --only-show-errors >/dev/null
 
 echo "==> Starting the bootstrap job"
 az containerapp job start --resource-group "$RG" --name "$BOOTSTRAP_JOB" --only-show-errors >/dev/null
