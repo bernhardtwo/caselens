@@ -1,5 +1,6 @@
 import json
 from collections.abc import Iterator
+from contextlib import ExitStack
 from dataclasses import dataclass
 from enum import StrEnum
 from typing import Any
@@ -9,8 +10,8 @@ import psycopg
 
 from caselens.clients import get_cohere_client
 from caselens.config.settings import Settings, get_settings
-from caselens.data.db import connect
 from caselens.data.models import TenantContext
+from caselens.data.pool import db_connection
 from caselens.rag.answer import citations as parse_citations
 from caselens.rag.answer import document as to_document
 from caselens.rag.models import Citation, RetrievedChunk
@@ -77,7 +78,9 @@ def run_agent_events(
     max_iterations = max_iterations or settings.agent_max_iterations
     co = co or get_cohere_client(settings)
     own_conn = conn is None
-    conn = conn or connect(settings)
+    stack = ExitStack()
+    if own_conn:
+        conn = stack.enter_context(db_connection())
     try:
         tools = (
             tools
@@ -171,8 +174,7 @@ def run_agent_events(
             citations = parse_citations(resp.message.citations)
             yield AgentEvent(EventType.CITATIONS, {"citations": citations, "sources": retrieved})
     finally:
-        if own_conn:
-            conn.close()
+        stack.close()
 
 
 def run_agent(

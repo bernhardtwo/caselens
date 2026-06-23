@@ -1,6 +1,7 @@
 import json
 import os
-from collections.abc import Iterable, Iterator
+from collections.abc import AsyncIterator, Iterable, Iterator
+from contextlib import asynccontextmanager
 from dataclasses import asdict
 from typing import Annotated, Any
 
@@ -13,8 +14,8 @@ from caselens.agent.loop import AgentEvent, AgentResult, EventType, run_agent, r
 from caselens.agent.tools import apply_status_change
 from caselens.clients import MissingApiKeyError
 from caselens.config.settings import get_settings
-from caselens.data.db import connect
 from caselens.data.models import AuditEntry, Claim, ClaimFilters, ClaimStatus, Role, TenantContext
+from caselens.data.pool import close_pool, db_connection, open_pool
 from caselens.data.repository import ClaimsRepository
 from caselens.rag.models import RetrievedChunk
 from caselens.security.audit import audit, list_audit
@@ -32,7 +33,16 @@ def require_access(request: Request) -> None:
         raise HTTPException(status_code=401, detail="Token de acceso inválido o ausente.")
 
 
-app = FastAPI(title="caselens", dependencies=[Depends(require_access)])
+@asynccontextmanager
+async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
+    open_pool()
+    try:
+        yield
+    finally:
+        close_pool()
+
+
+app = FastAPI(title="caselens", dependencies=[Depends(require_access)], lifespan=lifespan)
 
 # Dev console runs on a separate origin; allow it to call the API from the browser.
 app.add_middleware(
@@ -162,8 +172,7 @@ def confirm_action(
     body: ConfirmRequest, ctx: Annotated[TenantContext, Depends(get_tenant_context)]
 ) -> dict[str, Any]:
     # Commit a proposed mutation through the same gated path, scoped to the caller's tenant.
-    conn = connect()
-    try:
+    with db_connection() as conn:
         result = apply_status_change(ctx, body.claim_id, body.to_status, conn=conn)
         if result.get("denied"):
             audit(
@@ -181,8 +190,6 @@ def confirm_action(
             code = 404 if "not found" in reason else 400 if "unknown status" in reason else 409
             raise HTTPException(status_code=code, detail=reason)
         return result
-    finally:
-        conn.close()
 
 
 @app.get("/claims")
@@ -197,39 +204,30 @@ def list_claims(
     except ValueError:
         raise HTTPException(status_code=400, detail=f"Estado desconocido: {status}") from None
     filters = ClaimFilters(status=status_filter, product=product, severity=severity)
-    conn = connect()
-    try:
+    with db_connection() as conn:
         claims = ClaimsRepository(conn).list(ctx, filters)
         return {"claims": [serialize_claim(c) for c in claims]}
-    finally:
-        conn.close()
 
 
 @app.get("/audit")
 def get_audit(
     ctx: Annotated[TenantContext, Depends(get_tenant_context)], limit: int = 100
 ) -> dict[str, Any]:
-    conn = connect()
-    try:
+    with db_connection() as conn:
         entries = list_audit(ctx, conn=conn, limit=limit)
         return {"audit": [serialize_audit(e) for e in entries]}
-    finally:
-        conn.close()
 
 
 @app.get("/dev/identities")
 def dev_identities() -> dict[str, Any]:
     """DEV/DEMO only: list seeded tenants and their users to populate the console switcher.
     Stands in for real auth and is intentionally not tenant-scoped."""
-    conn = connect()
-    try:
+    with db_connection() as conn:
         with conn.cursor() as cur:
             cur.execute("SELECT id, name FROM tenants ORDER BY id")
             tenants = cur.fetchall()
             cur.execute("SELECT id, tenant_id, email, role FROM users ORDER BY tenant_id, id")
             users = cur.fetchall()
-    finally:
-        conn.close()
     members: dict[int, list[dict[str, Any]]] = {}
     for user_id, tenant_id, email, role in users:
         members.setdefault(tenant_id, []).append({"id": user_id, "email": email, "role": role})
