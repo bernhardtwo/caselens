@@ -15,6 +15,7 @@ dependencies = [
 [project.scripts]
 caselens-rag = "caselens.rag.cli:main"
 caselens-seed = "caselens.data.generators:main"
+caselens-bootstrap = "caselens.bootstrap:main"
 
 [dependency-groups]
 dev = [
