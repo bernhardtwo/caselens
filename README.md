@@ -2,6 +2,12 @@
 
 A Cohere-native enterprise agent for warranty-claims triage: grounded RAG with native citations, tenant-scoped data, guarded actions, and an audit trail on every step.
 
+## Live demo
+
+A live instance is up at https://caselens-web.mangowave-84b15261.centralus.azurecontainerapps.io
+
+The demo sits behind an access token, so ask me for it over the same channel where I shared the repo. I keep it out of this README on purpose. One honest heads up: the first load can take a few seconds, because the apps scale to zero when idle and need a moment to spin back up.
+
 ## What it is and why
 
 Enterprises want to put an agent in front of sensitive operational data and let it both answer questions and take actions. The hard part is not the chat, it is doing this safely: the agent must stay inside one tenant's data, refuse actions a role cannot take, ground its answers in real documents, and leave a reviewable trail. CaseLens is a focused build of that pattern over a simulated warranty-claims domain. It runs a Cohere Command tool-use loop that retrieves policy with RAG, reads claims scoped to the caller's tenant, and proposes status changes behind RBAC and a deterministic state machine. Scoping lives below the model, citations are produced by Cohere over the final answer, and every tool call and action is written to an append-only audit log.
